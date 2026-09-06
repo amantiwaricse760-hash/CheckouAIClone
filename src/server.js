@@ -56,12 +56,16 @@ const mimeTypes = {
 const server = http.createServer((req, res) => {
   let urlPath = req.url.split('?')[0];
 
-  // Route: /phone or /companion -> mobile companion
+  // Route: /download -> cross-platform portal
   let targetDir = path.join(__dirname, 'renderer');
-  if (urlPath.startsWith('/phone') || urlPath.startsWith('/companion')) {
+  if (urlPath === '/download' || urlPath === '/install') {
+    targetDir = path.join(__dirname, '../docs');
+    urlPath = '/index.html';
+  } else if (urlPath.startsWith('/phone') || urlPath.startsWith('/companion')) {
     targetDir = path.join(__dirname, 'companion');
     urlPath = '/index.html';
   } else if (urlPath === '/' || urlPath === '') {
+    targetDir = path.join(__dirname, 'renderer');
     urlPath = '/index.html';
   }
 

@@ -13,6 +13,10 @@
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/amantiwaricse760-hash/CheckouAIClone.git"
+  },
   "build": {
     "appId": "com.checkouai.copilot",
     "productName": "Checkou AI Copilot",
@@ -32,14 +36,28 @@
     },
     "win": {
       "target": [
-        "nsis",
-        "portable"
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
       ]
     },
     "mac": {
       "target": [
-        "dmg"
-      ]
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "category": "public.app-category.developer-tools"
     }
   },
   "keywords": ["interview", "ai", "copilot", "electron", "stealth"],
