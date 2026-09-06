@@ -8,6 +8,7 @@ const CompanionServer = require('../services/companionServer');
 const NativeAudioService = require('../services/nativeAudioService');
 const DeepgramLiveService = require('../services/deepgramService');
 const ScreenCaptureService = require('../services/screenCaptureService');
+const InterviewConversationAnalyzer = require('../services/conversationAnalyzer');
 
 let mainWindow = null;
 let snipWindow = null;
@@ -17,6 +18,7 @@ let companionServer = null;
 let nativeAudio = null;
 let deepgramService = null;
 let screenCaptureService = null;
+let conversationAnalyzer = null;
 let lastFullScreenshot = null;
 let currentActiveMode = 'code';
 
@@ -140,6 +142,7 @@ app.whenReady().then(() => {
   const initialProfile = loadProfile();
   const apiKey = process.env.GEMINI_API_KEY || "";
   geminiService = new GeminiService(apiKey);
+  conversationAnalyzer = new InterviewConversationAnalyzer(apiKey);
 
   // Initialize Phone Companion Server
   const companionPort = parseInt(process.env.COMPANION_PORT || '3890', 10);
@@ -168,9 +171,9 @@ app.whenReady().then(() => {
     }
   });
 
-  nativeAudio.on('chunk', (chunk) => {
+  nativeAudio.on('chunk', (chunk, source) => {
     if (deepgramService && deepgramService.isConnected) {
-      deepgramService.sendAudioChunk(chunk);
+      deepgramService.sendAudioChunk(chunk, source);
     }
   });
 
@@ -235,15 +238,30 @@ ipcMain.on('start-native-audio', (event, { source, mode }) => {
 
     if (deepgramService && deepgramService.apiKey) {
       deepgramService.startStreaming({
-        onTranscript: (text) => {
+        onTranscript: (text, isFinal, speaker) => {
           if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('ai-transcribed', { question: text });
+            mainWindow.webContents.send('ai-transcribed', { question: text, isFinal, speaker });
           }
         },
-        onSentenceComplete: async (question) => {
-          console.log(`[Copilot Auto-Answer] Question captured: "${question}". Generating answer...`);
+        onSentenceComplete: async (rawText, speaker) => {
+          console.log(`[Auto-Trigger]: Raw transcript captured: "${rawText}" (Speaker: ${speaker})`);
+
+          if (!conversationAnalyzer) {
+            conversationAnalyzer = new InterviewConversationAnalyzer(process.env.GEMINI_API_KEY || "");
+          }
+
+          const analysis = await conversationAnalyzer.analyze(rawText, speaker);
+          console.log(`[ConversationAnalyzer Result]:`, analysis);
+
+          if (!analysis.isQuestion || !analysis.question) {
+            console.log(`[ConversationAnalyzer] Filtered out turn: Not an interviewer question (Speaker: ${analysis.speaker}, Confidence: ${analysis.confidence})`);
+            return;
+          }
+
+          const question = analysis.question;
+          console.log(`[Copilot Auto-Answer] Valid Interviewer Question identified: "${question}". Generating answer...`);
           if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('ai-transcribed', { question });
+            mainWindow.webContents.send('ai-transcribed', { question, isCleanQuestion: true, metadata: analysis });
           }
           const profile = loadProfile();
           if (companionServer) {

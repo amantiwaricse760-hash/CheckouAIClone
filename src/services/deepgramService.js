@@ -20,6 +20,7 @@ class DeepgramLiveService {
     this.sentenceTimeout = null;
     this.lastTriggeredText = "";
     this.lastTriggerTime = 0;
+    this.currentSpeaker = 'interviewer';
   }
 
   setApiKey(key) {
@@ -87,13 +88,14 @@ class DeepgramLiveService {
             return;
           }
 
-          console.log(`[Deepgram Auto-Trigger (${reason})]: "${text}"`);
+          console.log(`[Deepgram Auto-Trigger (${reason})]: "${text}" (${this.currentSpeaker})`);
           this.lastTriggeredText = text;
           this.lastTriggerTime = now;
           this.fullTranscript = "";
 
+          const speaker = this.currentSpeaker || 'interviewer';
           if (this.streamConfig?.onSentenceComplete) {
-            this.streamConfig.onSentenceComplete(text);
+            this.streamConfig.onSentenceComplete(text, speaker);
           }
         }
       };
@@ -116,7 +118,7 @@ class DeepgramLiveService {
               this.fullTranscript += (this.fullTranscript ? " " : "") + transcript;
               const displayTranscript = normalizeCodingSpeech(this.fullTranscript);
               if (this.streamConfig?.onTranscript) {
-                this.streamConfig.onTranscript(displayTranscript, true);
+                this.streamConfig.onTranscript(displayTranscript, true, this.currentSpeaker);
               }
 
               // Rapid smart debounce:
@@ -130,7 +132,7 @@ class DeepgramLiveService {
               const preview = this.fullTranscript + (this.fullTranscript ? " " : "") + transcript;
               const displayPreview = normalizeCodingSpeech(preview);
               if (this.streamConfig?.onTranscript) {
-                this.streamConfig.onTranscript(displayPreview, false);
+                this.streamConfig.onTranscript(displayPreview, false, this.currentSpeaker);
               }
             }
           }
@@ -169,7 +171,10 @@ class DeepgramLiveService {
     }
   }
 
-  sendAudioChunk(buffer) {
+  sendAudioChunk(buffer, source = 'monitor') {
+    if (source === 'mic') this.currentSpeaker = 'candidate';
+    else if (source === 'monitor') this.currentSpeaker = 'interviewer';
+
     if (this.ws && this.isConnected && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(buffer);
     }

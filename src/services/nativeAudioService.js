@@ -142,7 +142,7 @@ class NativeAudioService extends EventEmitter {
 
     if (this.currentSource === 'mic') {
       if (source === 'mic') {
-        this.emit('chunk', data);
+        this.emit('chunk', data, 'mic');
         this.emit('level', level);
         this.checkVoiceActivity(level);
       }
@@ -151,7 +151,7 @@ class NativeAudioService extends EventEmitter {
 
     if (this.currentSource === 'monitor') {
       if (source === 'monitor') {
-        this.emit('chunk', data);
+        this.emit('chunk', data, 'monitor');
         this.emit('level', level);
         this.checkVoiceActivity(level);
       }
@@ -160,13 +160,12 @@ class NativeAudioService extends EventEmitter {
 
     // Dual 'both' mode:
     // Seamless direct routing: Whichever stream has active voice or recent voice is emitted directly
-    // This avoids queue phase mismatch, sample rate tearing, or time dilation
     if (level > 6) {
       this.lastActiveSource = source;
     }
 
     if (source === this.lastActiveSource) {
-      this.emit('chunk', data);
+      this.emit('chunk', data, source);
       this.emit('level', level);
       this.checkVoiceActivity(level);
     }
