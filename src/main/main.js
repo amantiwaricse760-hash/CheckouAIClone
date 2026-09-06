@@ -7,13 +7,18 @@ const GeminiService = require('../services/geminiService');
 const CompanionServer = require('../services/companionServer');
 const NativeAudioService = require('../services/nativeAudioService');
 const DeepgramLiveService = require('../services/deepgramService');
+const ScreenCaptureService = require('../services/screenCaptureService');
 
 let mainWindow = null;
+let snipWindow = null;
 let isGhostMode = false;
 let geminiService = null;
 let companionServer = null;
 let nativeAudio = null;
 let deepgramService = null;
+let screenCaptureService = null;
+let lastFullScreenshot = null;
+let currentActiveMode = 'code';
 
 // Paths for profile & config
 const userDataPath = app.getPath('userData');
@@ -108,6 +113,18 @@ function createWindow() {
     }
   });
 
+  // Ctrl + S: Instant Coding Question Capture & Solve
+  globalShortcut.register('CommandOrControl+S', () => {
+    console.log('[Shortcut] Ctrl+S pressed: Auto-capturing coding question from screen...');
+    triggerScreenSolve();
+  });
+
+  // Ctrl + Shift + S: Interactive Region Snip Tool
+  globalShortcut.register('CommandOrControl+Shift+S', () => {
+    console.log('[Shortcut] Ctrl+Shift+S pressed: Opening snip overlay...');
+    openSnipWindow();
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -136,6 +153,7 @@ app.whenReady().then(() => {
   // Initialize Native Linux Audio Loopback (records Google Meet directly)
   nativeAudio = new NativeAudioService();
   deepgramService = new DeepgramLiveService(process.env.DEEPGRAM_API_KEY || "");
+  screenCaptureService = new ScreenCaptureService();
   let currentActiveMode = 'points';
 
   nativeAudio.on('level', (level) => {
@@ -402,4 +420,125 @@ ipcMain.on('ask-audio-copilot', async (event, { audioBase64, mimeType, mode }) =
 
 ipcMain.on('broadcast-clear', () => {
   if (companionServer) companionServer.broadcast({ type: 'CLEAR' });
+});
+
+// Screen Question Capture & Solve Logic (Ctrl+S / Snipping Tool)
+async function triggerScreenSolve(imageBuffer = null) {
+  try {
+    let base64 = imageBuffer;
+
+    if (!base64) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ai-transcribed', { question: '📸 Scanning screen for coding question...' });
+      }
+      base64 = await screenCaptureService.captureFullScreen(mainWindow);
+    }
+
+    if (!base64) return;
+
+    if (companionServer) {
+      companionServer.broadcast({ type: 'STATUS', data: 'generating' });
+    }
+
+    const profile = loadProfile();
+    await geminiService.streamVisionAnswer(
+      base64,
+      profile,
+      'code',
+      (question) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ai-transcribed', { question });
+        }
+        if (companionServer) companionServer.broadcast({ type: 'QUESTION', data: question });
+      },
+      (chunk, fullText) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ai-token', { chunk, fullText });
+        }
+        if (companionServer) companionServer.broadcast({ type: 'TOKEN', chunk, fullText });
+      },
+      (fullText) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ai-complete', { fullText });
+        }
+        if (companionServer) companionServer.broadcast({ type: 'STATUS', data: 'idle' });
+      },
+      (err) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ai-error', { error: err.message });
+        }
+      }
+    );
+  } catch (e) {
+    console.error('[ScreenSolve Error]:', e);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('ai-error', { error: 'Screen capture failed: ' + e.message });
+    }
+  }
+}
+
+async function openSnipWindow() {
+  try {
+    lastFullScreenshot = await screenCaptureService.captureFullScreen(mainWindow);
+
+    if (snipWindow && !snipWindow.isDestroyed()) {
+      snipWindow.close();
+    }
+
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width, height } = primaryDisplay.bounds;
+
+    snipWindow = new BrowserWindow({
+      x: 0,
+      y: 0,
+      width,
+      height,
+      transparent: true,
+      frame: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      enableLargerThanScreen: true,
+      hasShadow: false,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js')
+      }
+    });
+
+    snipWindow.loadFile(path.join(__dirname, '../snip/snip.html'));
+    snipWindow.setAlwaysOnTop(true, 'screen-saver');
+  } catch (e) {
+    console.error('[Snip Window Error]:', e);
+  }
+}
+
+function closeSnipWindow() {
+  if (snipWindow && !snipWindow.isDestroyed()) {
+    snipWindow.close();
+    snipWindow = null;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+  }
+}
+
+ipcMain.on('capture-screen-solve', () => {
+  triggerScreenSolve();
+});
+
+ipcMain.on('start-snip-capture', () => {
+  openSnipWindow();
+});
+
+ipcMain.on('snip-completed', (event, bounds) => {
+  if (lastFullScreenshot && screenCaptureService) {
+    const cropped = screenCaptureService.cropImage(lastFullScreenshot, bounds);
+    closeSnipWindow();
+    triggerScreenSolve(cropped);
+  } else {
+    closeSnipWindow();
+  }
+});
+
+ipcMain.on('snip-cancelled', () => {
+  closeSnipWindow();
 });

@@ -16,6 +16,12 @@ contextBridge.exposeInMainWorld('copilotAPI', {
   stopNativeAudio: () => ipcRenderer.send('stop-native-audio'),
   setNativeAudioSource: (source) => ipcRenderer.send('set-native-audio-source', source),
   
+  // Screen Question Capture & Snip APIs
+  captureScreen: () => ipcRenderer.send('capture-screen-solve'),
+  startSnip: () => ipcRenderer.send('start-snip-capture'),
+  sendSnipCompleted: (bounds) => ipcRenderer.send('snip-completed', bounds),
+  sendSnipCancelled: () => ipcRenderer.send('snip-cancelled'),
+
   minimizeApp: () => ipcRenderer.send('minimize-app'),
   hideApp: () => ipcRenderer.send('hide-app'),
   closeApp: () => ipcRenderer.send('close-app'),

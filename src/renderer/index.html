@@ -79,10 +79,12 @@
             <span style="font-size: 10px; font-weight: 600; color: #4ade80; background: rgba(34, 197, 94, 0.15); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(34, 197, 94, 0.3);">⚡ Hands-Free Auto</span>
           </div>
           <div class="card-actions">
-            <button class="action-chip primary" id="btnAskNow" title="Answers trigger automatically. Click or press Enter to force re-answer anytime.">⚡ Force Answer (Enter)</button>
+            <button class="action-chip" id="btnScreenSolve" title="Instantly scan screen for coding question and solve (Ctrl+S)" style="border-color: #38bdf8; color: #38bdf8;">📸 Screen (Ctrl+S)</button>
+            <button class="action-chip" id="btnSnipArea" title="Drag a box around coding question (Ctrl+Shift+S)">✂️ Snip</button>
+            <button class="action-chip primary" id="btnAskNow" title="Click or press Enter to force re-answer anytime.">⚡ Answer</button>
           </div>
         </div>
-        <textarea id="questionInput" class="question-input no-drag" rows="2" placeholder="Listening to Google Meet live... Questions are captured and answered automatically without clicking anything."></textarea>
+        <textarea id="questionInput" class="question-input no-drag" rows="2" placeholder="Listening to Google Meet live... or press Ctrl+S to capture any coding problem from your screen."></textarea>
       </div>
 
       <!-- Live AI Answer Card -->
@@ -101,14 +103,15 @@
         </div>
         <div class="answer-content no-drag" id="answerDisplay">
           <div class="placeholder-text">
-            When your interviewer speaks, bullet-point answers and code snippets will stream here instantly.
+            When your interviewer speaks or when you press <strong>Ctrl+S</strong> to capture a screen problem, solutions will stream here instantly.
           </div>
         </div>
       </div>
 
       <!-- Footer Shortcuts -->
       <footer class="hud-footer">
-        <span>Instant: <code>Ctrl+Space</code></span>
+        <span>Screen: <code>Ctrl+S</code></span>
+        <span>Snip: <code>Ctrl+Shift+S</code></span>
         <span>Hide: <code>Ctrl+Shift+H</code></span>
         <span>Ghost: <code>Ctrl+Shift+G</code></span>
         <span>Clear: <code>Ctrl+Shift+C</code></span>

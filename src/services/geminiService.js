@@ -318,6 +318,129 @@ followed immediately by your candidate response following the style guidelines.`
 
     if (onComplete) onComplete(fullText);
   }
+
+  async streamVisionAnswer(imageBase64, profile = {}, mode = 'code', onTranscribed, onToken, onComplete, onError) {
+    if (!this.apiKey) {
+      if (onError) onError(new Error("Gemini API Key is missing."));
+      return;
+    }
+
+    if (this.activeController) {
+      try { this.activeController.abort(); } catch (e) {}
+    }
+    this.activeController = new AbortController();
+    const { signal } = this.activeController;
+
+    const systemPrompt = this.buildSystemPrompt(profile, mode);
+    const instruction = `${systemPrompt}
+
+SCREEN CODING QUESTION VISION TASK:
+1. Carefully scan this screen capture from a technical coding interview.
+2. LOCATE AND EXTRACT ONLY THE CODING QUESTION / PROBLEM DESCRIPTION AREA (e.g. on LeetCode, HackerRank, CodeSignal, CoderPad, Google Docs, or Google Meet screen share).
+   - Completely ignore browser tabs, URL address bars, navigation menus, video webcam tiles, chat bars, and code editor panes.
+3. First output on line 1:
+[QUESTION]: <Exact title, full problem statement, constraints, and sample input/output>
+4. Then output on a new line:
+[ANSWER]:
+followed immediately by your optimal coding solution:
+- Line 1: **Time Complexity: O(...) | Space Complexity: O(...)**
+- Optimal, clean, complete, bug-free implementation in the required language (defaulting to TypeScript/JavaScript/Python).
+- 3 punchy bullet points on key edge cases, invariants, and implementation trade-offs.`;
+
+    try {
+      const payload = {
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                inline_data: {
+                  mime_type: "image/png",
+                  data: imageBase64
+                }
+              },
+              { text: instruction }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 1024
+        }
+      };
+
+      const headers = {
+        "Content-Type": "application/json",
+        "X-goog-api-key": this.apiKey
+      };
+
+      let url = `https://generativelanguage.googleapis.com/v1beta/models/${this.modelName}:streamGenerateContent?alt=sse`;
+      let response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal
+      });
+
+      if (!response.ok) {
+        url = `https://generativelanguage.googleapis.com/v1beta/models/${this.fallbackModel}:streamGenerateContent?alt=sse`;
+        response = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+          signal
+        });
+      }
+
+      let accumulated = "";
+      await this._processSSEResponse(
+        response,
+        (chunk, full) => {
+          accumulated = full;
+          this._parseVisionStreaming(accumulated, onTranscribed, onToken);
+        },
+        (finalFull) => {
+          this._parseVisionResponse(finalFull, onTranscribed, onToken, onComplete);
+        }
+      );
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      if (onError) onError(err);
+    }
+  }
+
+  _parseVisionStreaming(text, onTranscribed, onToken) {
+    if (text.includes('[QUESTION]:') && text.includes('[ANSWER]:')) {
+      const qMatch = text.match(/\[QUESTION\]:\s*([\s\S]*?)(?=\[ANSWER\]:)/);
+      if (qMatch && qMatch[1] && onTranscribed) {
+        onTranscribed(qMatch[1].trim());
+      }
+      const answerPart = text.split('[ANSWER]:')[1] || "";
+      if (onToken) onToken(answerPart, answerPart);
+    } else if (text.includes('[QUESTION]:')) {
+      const qText = text.replace(/\[QUESTION\]:\s*/, '');
+      if (onTranscribed) onTranscribed(qText.trim());
+    } else {
+      if (onToken) onToken(text, text);
+    }
+  }
+
+  _parseVisionResponse(text, onTranscribed, onToken, onComplete) {
+    let question = "";
+    let answer = text;
+
+    if (text.includes('[QUESTION]:') && text.includes('[ANSWER]:')) {
+      const parts = text.split('[ANSWER]:');
+      question = parts[0].replace('[QUESTION]:', '').trim();
+      answer = (parts[1] || "").trim();
+    } else if (text.includes('[QUESTION]:')) {
+      question = text.replace('[QUESTION]:', '').trim();
+    }
+
+    if (question && onTranscribed) onTranscribed(question);
+    if (onToken) onToken(answer, answer);
+    if (onComplete) onComplete(answer);
+  }
 }
 
 module.exports = GeminiService;

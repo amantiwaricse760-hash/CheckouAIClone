@@ -26,6 +26,8 @@ const questionInput = document.getElementById('questionInput');
 const answerDisplay = document.getElementById('answerDisplay');
 
 const btnAskNow = document.getElementById('btnAskNow');
+const btnScreenSolve = document.getElementById('btnScreenSolve');
+const btnSnipArea = document.getElementById('btnSnipArea');
 const btnRegen = document.getElementById('btnRegen');
 const btnMoreDetails = document.getElementById('btnMoreDetails');
 const btnCopy = document.getElementById('btnCopy');
@@ -502,6 +504,25 @@ function setupEventListeners() {
   btnAskNow.addEventListener('click', () => {
     triggerAsk(questionInput.value);
   });
+
+  // Screen Solve Button (Ctrl+S)
+  if (btnScreenSolve) {
+    btnScreenSolve.addEventListener('click', () => {
+      if (window.copilotAPI && window.copilotAPI.captureScreen) {
+        setStatus('generating', 'Scanning Screen...');
+        window.copilotAPI.captureScreen();
+      }
+    });
+  }
+
+  // Snip Area Button (Ctrl+Shift+S)
+  if (btnSnipArea) {
+    btnSnipArea.addEventListener('click', () => {
+      if (window.copilotAPI && window.copilotAPI.startSnip) {
+        window.copilotAPI.startSnip();
+      }
+    });
+  }
 
   // Regenerate Button
   btnRegen.addEventListener('click', () => {
