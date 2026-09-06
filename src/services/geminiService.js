@@ -6,8 +6,8 @@
 class GeminiService {
   constructor(apiKey) {
     this.apiKey = apiKey || process.env.GEMINI_API_KEY;
-    this.modelName = 'gemini-flash-latest';
-    this.fallbackModel = 'gemini-1.5-flash';
+    this.modelName = 'gemini-2.0-flash';
+    this.fallbackModel = 'gemini-flash-latest';
   }
 
   setApiKey(key) {
@@ -16,31 +16,28 @@ class GeminiService {
 
   buildSystemPrompt(profile, mode) {
     const styleGuides = {
-      points: "Format output strictly as punchy bullet points. Start with a direct 1-sentence bottom line. Keep points under 15 words each so the candidate can read them at a glance while speaking.",
-      desi: "Use natural Indian software professional phrasing ('Desi Mode'). Sound polite, confident, pragmatic, and conversational. Refer to practical engineering experience and common production scenarios.",
-      code: "Prioritize writing clean, complete, idiomatic code right away. Add time and space complexity analysis (Big-O). Include brief comments explaining key logic.",
-      deep: "Provide a structured technical response: 1) High-level concept, 2) Key trade-offs/mechanisms, 3) Real-world architectural example, 4) Edge cases."
+      points: "Output 3-4 punchy, high-impact bullet points immediately. Start with the direct bottom-line answer in bold. Under 15 words per point. Zero filler.",
+      desi: "Use natural Indian software professional phrasing ('Desi Mode'). Sound polite, confident, pragmatic, and conversational. Give the direct technical answer right away.",
+      code: "Output clean, complete, optimal code immediately with Big-O time and space complexity at the top.",
+      deep: "Provide a quick structured technical response: 1) Concept, 2) Trade-offs, 3) Real-world architecture example."
     };
 
     const selectedGuide = styleGuides[mode] || styleGuides.points;
 
-    return `You are a real-time AI Interview Copilot assisting a candidate discreetly during a live technical/behavioral interview.
+    return `You are a real-time AI Interview Copilot assisting a candidate live in an interview.
 
 CANDIDATE CONTEXT:
 - Target Role: ${profile.targetRole || 'Software Engineer'}
-- Experience: ${profile.yearsOfExperience || 'Experienced'}
-- Primary Skills: ${(profile.primarySkills || []).join(', ')}
-- Resume Background: ${profile.resumeSummary || 'Experienced software developer with strong fundamentals.'}
-- Special Notes: ${profile.customInstructions || 'Be clear and concise.'}
+- Skills: ${(profile.primarySkills || []).join(', ')}
+- Resume Background: ${profile.resumeSummary || 'Experienced software engineer.'}
 
-STYLE GUIDELINES FOR THIS QUESTION (${mode.toUpperCase()} MODE):
+STYLE GUIDELINES (${mode.toUpperCase()} MODE):
 ${selectedGuide}
 
 CRITICAL RULES:
-1. Answer directly in the FIRST PERSON ('I', 'We in my previous project', 'My approach is...').
-2. NEVER say 'Here is an answer for you' or 'As an AI'. Sound 100% like an experienced engineer talking.
-3. Put the most critical talking points at the very top. The candidate only has 2 seconds to glance at your response.
-4. If code is requested, provide syntactically valid code blocks with language tag (e.g. \`\`\`javascript or \`\`\`python).`;
+1. START IMMEDIATELY. NO filler like 'Sure', 'Here is an answer', or conversational preamble.
+2. First-person voice ('I use...', 'My approach is...').
+3. Short, high-contrast talking points that can be read in 1 second.`;
   }
 
   async streamAnswer(question, profile = {}, mode = 'points', onToken, onComplete, onError) {

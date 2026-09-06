@@ -100,6 +100,12 @@ function createWindow() {
     if (companionServer) companionServer.broadcast({ type: 'CLEAR' });
   });
 
+  globalShortcut.register('CommandOrControl+Space', () => {
+    if (nativeAudio && nativeAudio.isRecording) {
+      nativeAudio.finalizeAndEmitAudio();
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
