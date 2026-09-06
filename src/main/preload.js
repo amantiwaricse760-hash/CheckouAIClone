@@ -11,6 +11,10 @@ contextBridge.exposeInMainWorld('copilotAPI', {
   setGhostMode: (enable) => ipcRenderer.send('set-ghost-mode', enable),
   setWindowSize: (size) => ipcRenderer.send('set-window-size', size),
   
+  startNativeAudio: (data) => ipcRenderer.send('start-native-audio', data),
+  stopNativeAudio: () => ipcRenderer.send('stop-native-audio'),
+  setNativeAudioSource: (source) => ipcRenderer.send('set-native-audio-source', source),
+  
   minimizeApp: () => ipcRenderer.send('minimize-app'),
   hideApp: () => ipcRenderer.send('hide-app'),
   closeApp: () => ipcRenderer.send('close-app'),
@@ -19,6 +23,8 @@ contextBridge.exposeInMainWorld('copilotAPI', {
   onAiToken: (callback) => ipcRenderer.on('ai-token', (event, data) => callback(data)),
   onAiComplete: (callback) => ipcRenderer.on('ai-complete', (event, data) => callback(data)),
   onAiTranscribed: (callback) => ipcRenderer.on('ai-transcribed', (event, data) => callback(data)),
+  onAudioLevel: (callback) => ipcRenderer.on('audio-level', (event, level) => callback(level)),
+  onSpeechActive: (callback) => ipcRenderer.on('speech-active', () => callback()),
   onAiError: (callback) => ipcRenderer.on('ai-error', (event, data) => callback(data)),
   onGhostModeChanged: (callback) => ipcRenderer.on('ghost-mode-changed', (event, isGhost) => callback(isGhost)),
   onClearRequest: (callback) => ipcRenderer.on('clear-request', () => callback()),

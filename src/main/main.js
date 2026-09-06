@@ -5,11 +5,13 @@ require('dotenv').config();
 
 const GeminiService = require('../services/geminiService');
 const CompanionServer = require('../services/companionServer');
+const NativeAudioService = require('../services/nativeAudioService');
 
 let mainWindow = null;
 let isGhostMode = false;
 let geminiService = null;
 let companionServer = null;
+let nativeAudio = null;
 
 // Paths for profile & config
 const userDataPath = app.getPath('userData');
@@ -123,6 +125,58 @@ app.whenReady().then(() => {
     }
   });
 
+  // Initialize Native Linux Audio Loopback (records Google Meet directly)
+  nativeAudio = new NativeAudioService();
+  let currentActiveMode = 'points';
+
+  nativeAudio.on('level', (level) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('audio-level', level);
+    }
+  });
+
+  nativeAudio.on('speech-start', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('speech-active');
+    }
+  });
+
+  nativeAudio.on('audio-ready', async ({ audioBase64, mimeType }) => {
+    console.log(`[NativeAudio] Audio chunk received from Google Meet. Processing...`);
+    const profile = loadProfile();
+    if (companionServer) companionServer.broadcast({ type: 'STATUS', data: 'generating' });
+
+    await geminiService.streamAudioAnswer(
+      audioBase64,
+      mimeType,
+      profile,
+      currentActiveMode,
+      (question) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ai-transcribed', { question });
+        }
+        if (companionServer) companionServer.broadcast({ type: 'QUESTION', data: question });
+      },
+      (chunk, fullText) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ai-token', { chunk, fullText });
+        }
+        if (companionServer) companionServer.broadcast({ type: 'TOKEN', chunk, fullText });
+      },
+      (fullText) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ai-complete', { fullText });
+        }
+        if (companionServer) companionServer.broadcast({ type: 'STATUS', data: 'idle' });
+      },
+      (error) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ai-error', { error: error.message });
+        }
+      }
+    );
+  });
+
   createWindow();
 
   app.on('activate', () => {
@@ -133,9 +187,25 @@ app.whenReady().then(() => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (companionServer) companionServer.stop();
+  if (nativeAudio) nativeAudio.stop();
 });
 
 // IPC Handlers
+ipcMain.on('start-native-audio', (event, { source, mode }) => {
+  if (nativeAudio) {
+    currentActiveMode = mode || 'points';
+    nativeAudio.setSource(source || 'monitor');
+    nativeAudio.start();
+  }
+});
+
+ipcMain.on('stop-native-audio', () => {
+  if (nativeAudio) nativeAudio.stop();
+});
+
+ipcMain.on('set-native-audio-source', (event, source) => {
+  if (nativeAudio) nativeAudio.setSource(source);
+});
 ipcMain.handle('get-initial-data', () => {
   return {
     profile: loadProfile(),

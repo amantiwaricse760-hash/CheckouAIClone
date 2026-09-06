@@ -88,6 +88,19 @@ async function init() {
       currentQuestion = question;
     });
 
+    window.copilotAPI.onAudioLevel((level) => {
+      if (isListening) {
+        statusPulse.style.transform = `scale(${1 + Math.min(level / 35, 0.9)})`;
+        statusPulse.style.boxShadow = level > 10 ? '0 0 10px #22c55e' : 'none';
+      }
+    });
+
+    window.copilotAPI.onSpeechActive(() => {
+      if (isListening) {
+        setStatus('listening', currentAudioSource === 'monitor' ? 'Interviewer Speaking...' : 'Candidate Speaking...');
+      }
+    });
+
     window.copilotAPI.onAiError(({ error }) => {
       setStatus('error', 'Error');
       answerDisplay.innerHTML = `<div style="color: #ef4444; padding: 10px;">⚠️ ${error}</div>`;
@@ -195,20 +208,36 @@ function renderMarkdown(rawText) {
 }
 
 // Audio Capture Engine (Gemini Multimodal)
-let mediaStream = null;
-let mediaRecorder = null;
-let recordedChunks = [];
-let audioContext = null;
-let analyser = null;
-let dataArray = null;
-let animFrameId = null;
-let lastSoundTime = Date.now();
-let isSpeaking = false;
-let useSystemAudio = false;
+let currentAudioSource = 'monitor'; // 'monitor' = Google Meet / System Audio, 'mic' = Microphone
 
 async function startAudioCapture() {
+  isListening = true;
+  btnListen.classList.add('active');
+  listenText.innerText = 'Listening...';
+  setStatus('listening', currentAudioSource === 'monitor' ? 'Listening to Meet...' : 'Listening to Mic...');
+
+  if (window.copilotAPI && window.copilotAPI.startNativeAudio) {
+    window.copilotAPI.startNativeAudio({ source: currentAudioSource, mode: currentMode });
+  } else {
+    startBrowserAudioCapture();
+  }
+}
+
+function stopAudioCapture() {
+  isListening = false;
+  btnListen.classList.remove('active');
+  listenText.innerText = 'Start Listening';
+  setStatus('ready', 'Ready');
+
+  if (window.copilotAPI && window.copilotAPI.stopNativeAudio) {
+    window.copilotAPI.stopNativeAudio();
+  }
+  stopBrowserAudioCapture();
+}
+
+async function startBrowserAudioCapture() {
   try {
-    if (useSystemAudio) {
+    if (currentAudioSource === 'monitor') {
       mediaStream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
         audio: { echoCancellation: true, noiseSuppression: true }
@@ -225,23 +254,13 @@ async function startAudioCapture() {
 
     setupAudioVisualizer(mediaStream);
     setupMediaRecorder(mediaStream);
-    isListening = true;
-    btnListen.classList.add('active');
-    listenText.innerText = 'Listening...';
-    setStatus('listening', 'Listening');
   } catch (err) {
-    console.error("Audio capture error:", err);
-    setStatus('error', 'Mic access error');
-    stopAudioCapture();
+    console.error("Browser audio capture error:", err);
+    setStatus('error', 'Audio access error');
   }
 }
 
-function stopAudioCapture() {
-  isListening = false;
-  btnListen.classList.remove('active');
-  listenText.innerText = 'Start Listening';
-  setStatus('ready', 'Ready');
-
+function stopBrowserAudioCapture() {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     try { mediaRecorder.stop(); } catch (e) {}
   }
@@ -426,14 +445,17 @@ function setupEventListeners() {
     }
   });
 
-  // Toggle Mic vs System Audio
+  // Toggle Google Meet vs Mic Audio
+  btnAudioSource.innerText = '🎧 Google Meet (Interviewer)';
   btnAudioSource.addEventListener('click', () => {
-    useSystemAudio = !useSystemAudio;
-    btnAudioSource.innerText = useSystemAudio ? '🖥️ System Audio' : '🎙️ Microphone';
-    btnAudioSource.style.borderColor = useSystemAudio ? '#38bdf8' : 'rgba(255, 255, 255, 0.1)';
+    currentAudioSource = currentAudioSource === 'monitor' ? 'mic' : 'monitor';
+    btnAudioSource.innerText = currentAudioSource === 'monitor' ? '🎧 Google Meet (Interviewer)' : '🎙️ Microphone (Me)';
+    btnAudioSource.style.borderColor = currentAudioSource === 'monitor' ? '#38bdf8' : 'rgba(255, 255, 255, 0.1)';
+    if (window.copilotAPI && window.copilotAPI.setNativeAudioSource) {
+      window.copilotAPI.setNativeAudioSource(currentAudioSource);
+    }
     if (isListening) {
-      stopAudioCapture();
-      startAudioCapture();
+      setStatus('listening', currentAudioSource === 'monitor' ? 'Listening to Meet...' : 'Listening to Mic...');
     }
   });
 
