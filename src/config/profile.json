@@ -1,0 +1,9 @@
+{
+  "name": "Candidate",
+  "targetRole": "Full Stack Software Engineer",
+  "yearsOfExperience": "2-4 years",
+  "primarySkills": ["JavaScript", "TypeScript", "Node.js", "React", "Python", "SQL", "System Design", "Data Structures & Algorithms"],
+  "interviewStyle": "desi_professional",
+  "customInstructions": "Keep bullet points short, confident, and conversational. Give the bottom-line answer first before elaborating. If asked to write code, provide clean, idiomatic code with optimal time & space complexity.",
+  "resumeSummary": "Experienced Software Engineer with a solid foundation in building scalable web applications, RESTful and WebSocket APIs, frontend architecture, and database optimization. Proficient in full-stack JavaScript/TypeScript ecosystem, Python, microservices, and problem solving."
+}

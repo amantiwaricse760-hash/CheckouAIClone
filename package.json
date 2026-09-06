@@ -1,0 +1,22 @@
+{
+  "name": "interview-copilot-desktop",
+  "version": "1.0.0",
+  "description": "Stealth AI Interview Copilot Desktop App",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "keywords": ["interview", "ai", "copilot", "electron", "stealth"],
+  "author": "Akash",
+  "license": "ISC",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^34.2.0"
+  }
+}

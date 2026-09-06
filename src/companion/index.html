@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Copilot Mobile Companion</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #131b2e;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --green: #22c55e;
+      --border: #1e293b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 12px; min-height: 100vh; }
+    
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+    }
+    .logo { font-weight: 700; font-size: 1.1rem; color: var(--accent); display: flex; align-items: center; gap: 6px; }
+    .status-badge {
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: #1e293b;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; }
+    
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .card-title {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    .question-text {
+      font-size: 1rem;
+      color: #e2e8f0;
+      line-height: 1.4;
+      font-weight: 500;
+    }
+    .answer-text {
+      font-size: 1.05rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #f8fafc;
+    }
+    .answer-text code {
+      background: #0b1120;
+      color: #38bdf8;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.95em;
+    }
+    .answer-text pre {
+      background: #020617;
+      padding: 12px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 10px 0;
+      border: 1px solid #1e293b;
+      color: #34d399;
+      font-family: monospace;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .btn {
+      background: #1e293b;
+      color: var(--text);
+      border: 1px solid #334155;
+      padding: 8px 4px;
+      border-radius: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-align: center;
+      cursor: pointer;
+    }
+    .btn:active { background: #38bdf8; color: #000; }
+    .empty-state {
+      color: var(--muted);
+      font-style: italic;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <span>🦅</span> Copilot Companion
+    </div>
+    <div class="status-badge" id="statusBadge">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Connected</span>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="card-title">Interviewer Question</div>
+    <div class="question-text" id="questionBox">
+      <span class="empty-state">Waiting for question...</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Live Answer</div>
+    <div class="answer-text" id="answerBox">
+      <span class="empty-state">Answers will stream here in real-time.</span>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn" onclick="sendAction('mode', 'points')">⚡ Points</button>
+    <button class="btn" onclick="sendAction('mode', 'desi')">🇮🇳 Desi</button>
+    <button class="btn" onclick="sendAction('mode', 'code')">💻 Code</button>
+    <button class="btn" onclick="sendAction('clear', '')">🗑️ Clear</button>
+  </div>
+
+  <script>
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}`;
+    let socket;
+
+    function connect() {
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        document.getElementById('statusText').innerText = 'Synced';
+        document.getElementById('statusDot').style.background = '#22c55e';
+      };
+
+      socket.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+
+        if (msg.type === 'SYNC_STATE') {
+          if (msg.data.question) document.getElementById('questionBox').innerText = msg.data.question;
+          if (msg.data.answer) document.getElementById('answerBox').innerText = msg.data.answer;
+        } else if (msg.type === 'QUESTION') {
+          document.getElementById('questionBox').innerText = msg.data;
+          document.getElementById('answerBox').innerHTML = '<span class="empty-state">Thinking...</span>';
+        } else if (msg.type === 'TOKEN') {
+          document.getElementById('answerBox').innerText = msg.fullText;
+          window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        } else if (msg.type === 'CLEAR') {
+          document.getElementById('questionBox').innerHTML = '<span class="empty-state">Waiting for question...</span>';
+          document.getElementById('answerBox').innerHTML = '<span class="empty-state">Answers will stream here in real-time.</span>';
+        }
+      };
+
+      socket.onclose = () => {
+        document.getElementById('statusText').innerText = 'Reconnecting...';
+        document.getElementById('statusDot').style.background = '#ef4444';
+        setTimeout(connect, 2000);
+      };
+    }
+
+    function sendAction(action, value) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ action, value }));
+      }
+    }
+
+    connect();
+  </script>
+</body>
+</html>
