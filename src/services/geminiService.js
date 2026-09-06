@@ -6,7 +6,7 @@
 class GeminiService {
   constructor(apiKey) {
     this.apiKey = apiKey || process.env.GEMINI_API_KEY;
-    this.modelName = 'gemini-2.0-flash'; // Ultra-low latency model
+    this.modelName = 'gemini-flash-latest';
     this.fallbackModel = 'gemini-1.5-flash';
   }
 
@@ -52,9 +52,6 @@ CRITICAL RULES:
     const systemPrompt = this.buildSystemPrompt(profile, mode);
 
     try {
-      // Direct REST API streaming endpoint (compatible with Node 18+ native fetch)
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.modelName}:streamGenerateContent?alt=sse&key=${this.apiKey}`;
-      
       const payload = {
         contents: [
           {
@@ -70,27 +67,48 @@ CRITICAL RULES:
         }
       };
 
-      const response = await fetch(url, {
+      const headers = {
+        "Content-Type": "application/json",
+        "X-goog-api-key": this.apiKey
+      };
+
+      // Try streaming endpoint first
+      let url = `https://generativelanguage.googleapis.com/v1beta/models/${this.modelName}:streamGenerateContent?alt=sse`;
+      let response = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(payload)
       });
 
+      // If model not found or error, fallback to gemini-1.5-flash
       if (!response.ok) {
-        // Attempt fallback to 1.5-flash if 2.0-flash is unavailable for this key
-        const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.fallbackModel}:streamGenerateContent?alt=sse&key=${this.apiKey}`;
-        const fallbackRes = await fetch(fallbackUrl, {
+        url = `https://generativelanguage.googleapis.com/v1beta/models/${this.fallbackModel}:streamGenerateContent?alt=sse`;
+        response = await fetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
+          body: JSON.stringify(payload)
+        });
+      }
+
+      // If streaming fails, try standard generateContent
+      if (!response.ok) {
+        const directUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.modelName}:generateContent`;
+        const directRes = await fetch(directUrl, {
+          method: "POST",
+          headers,
           body: JSON.stringify(payload)
         });
 
-        if (!fallbackRes.ok) {
-          const errText = await fallbackRes.text();
-          throw new Error(`Gemini API Error (${fallbackRes.status}): ${errText}`);
+        if (directRes.ok) {
+          const data = await directRes.json();
+          const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          if (onToken) onToken(text, text);
+          if (onComplete) onComplete(text);
+          return;
         }
-        await this._processSSEResponse(fallbackRes, onToken, onComplete);
-        return;
+
+        const errText = await response.text();
+        throw new Error(`Gemini API Error (${response.status}): ${errText}`);
       }
 
       await this._processSSEResponse(response, onToken, onComplete);
