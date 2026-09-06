@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('copilotAPI', {
   getInitialData: () => ipcRenderer.invoke('get-initial-data'),
   saveProfile: (profile) => ipcRenderer.invoke('save-profile', profile),
   updateApiKey: (key) => ipcRenderer.invoke('update-api-key', key),
+  updateDeepgramKey: (key) => ipcRenderer.invoke('update-deepgram-key', key),
   
   askCopilot: (data) => ipcRenderer.send('ask-copilot', data),
   askAudioCopilot: (data) => ipcRenderer.send('ask-audio-copilot', data),

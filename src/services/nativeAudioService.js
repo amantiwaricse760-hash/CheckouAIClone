@@ -68,6 +68,7 @@ class NativeAudioService extends EventEmitter {
     this.process.stdout.on('data', (data) => {
       if (!this.isRecording) return;
       this.chunks.push(data);
+      this.emit('chunk', data);
 
       // Fast audio level calculation
       let sum = 0;

@@ -6,12 +6,14 @@ require('dotenv').config();
 const GeminiService = require('../services/geminiService');
 const CompanionServer = require('../services/companionServer');
 const NativeAudioService = require('../services/nativeAudioService');
+const DeepgramLiveService = require('../services/deepgramService');
 
 let mainWindow = null;
 let isGhostMode = false;
 let geminiService = null;
 let companionServer = null;
 let nativeAudio = null;
+let deepgramService = null;
 
 // Paths for profile & config
 const userDataPath = app.getPath('userData');
@@ -133,6 +135,7 @@ app.whenReady().then(() => {
 
   // Initialize Native Linux Audio Loopback (records Google Meet directly)
   nativeAudio = new NativeAudioService();
+  deepgramService = new DeepgramLiveService(process.env.DEEPGRAM_API_KEY || "");
   let currentActiveMode = 'points';
 
   nativeAudio.on('level', (level) => {
@@ -147,7 +150,16 @@ app.whenReady().then(() => {
     }
   });
 
+  nativeAudio.on('chunk', (chunk) => {
+    if (deepgramService && deepgramService.isConnected) {
+      deepgramService.sendAudioChunk(chunk);
+    }
+  });
+
   nativeAudio.on('audio-ready', async ({ audioBase64, mimeType }) => {
+    // Only use full audio multimodal if Deepgram is not active
+    if (deepgramService && deepgramService.isConnected) return;
+
     console.log(`[NativeAudio] Audio chunk received from Google Meet. Processing...`);
     const profile = loadProfile();
     if (companionServer) companionServer.broadcast({ type: 'STATUS', data: 'generating' });
@@ -194,6 +206,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (companionServer) companionServer.stop();
   if (nativeAudio) nativeAudio.stop();
+  if (deepgramService) deepgramService.stop();
 });
 
 // IPC Handlers
@@ -201,12 +214,56 @@ ipcMain.on('start-native-audio', (event, { source, mode }) => {
   if (nativeAudio) {
     currentActiveMode = mode || 'points';
     nativeAudio.setSource(source || 'monitor');
+
+    if (deepgramService && deepgramService.apiKey) {
+      deepgramService.startStreaming({
+        onTranscript: (text) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('ai-transcribed', { question: text });
+          }
+        },
+        onSentenceComplete: async (question) => {
+          console.log(`[Deepgram] Live sentence: "${question}". Answering via Gemini...`);
+          const profile = loadProfile();
+          if (companionServer) {
+            companionServer.broadcast({ type: 'QUESTION', data: question });
+            companionServer.broadcast({ type: 'STATUS', data: 'generating' });
+          }
+
+          await geminiService.streamAnswer(
+            question,
+            profile,
+            currentActiveMode,
+            (chunk, fullText) => {
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('ai-token', { chunk, fullText });
+              }
+              if (companionServer) companionServer.broadcast({ type: 'TOKEN', chunk, fullText });
+            },
+            (fullText) => {
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('ai-complete', { fullText });
+              }
+              if (companionServer) companionServer.broadcast({ type: 'STATUS', data: 'idle' });
+            },
+            (err) => {
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('ai-error', { error: err.message });
+              }
+            }
+          );
+        },
+        onError: (err) => console.error("[Deepgram] Error:", err)
+      });
+    }
+
     nativeAudio.start();
   }
 });
 
 ipcMain.on('stop-native-audio', () => {
   if (nativeAudio) nativeAudio.stop();
+  if (deepgramService) deepgramService.stop();
 });
 
 ipcMain.on('set-native-audio-source', (event, source) => {
@@ -227,6 +284,11 @@ ipcMain.handle('save-profile', (event, profile) => {
 
 ipcMain.handle('update-api-key', (event, newKey) => {
   if (geminiService) geminiService.setApiKey(newKey);
+  return true;
+});
+
+ipcMain.handle('update-deepgram-key', (event, newKey) => {
+  if (deepgramService) deepgramService.setApiKey(newKey);
   return true;
 });
 

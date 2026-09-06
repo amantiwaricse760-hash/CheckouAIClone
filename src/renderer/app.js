@@ -46,6 +46,7 @@ const settingsModal = document.getElementById('settingsModal');
 const btnCloseSettings = document.getElementById('btnCloseSettings');
 const btnSaveSettings = document.getElementById('btnSaveSettings');
 const inputApiKey = document.getElementById('inputApiKey');
+const inputDeepgramKey = document.getElementById('inputDeepgramKey');
 const inputRole = document.getElementById('inputRole');
 const inputExp = document.getElementById('inputExp');
 const inputSkills = document.getElementById('inputSkills');
@@ -571,6 +572,10 @@ function setupEventListeners() {
 
     if (inputApiKey.value.trim() && window.copilotAPI) {
       await window.copilotAPI.updateApiKey(inputApiKey.value.trim());
+    }
+
+    if (inputDeepgramKey && inputDeepgramKey.value.trim() && window.copilotAPI) {
+      await window.copilotAPI.updateDeepgramKey(inputDeepgramKey.value.trim());
     }
 
     if (window.copilotAPI) {
