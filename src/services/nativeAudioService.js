@@ -55,12 +55,11 @@ class NativeAudioService extends EventEmitter {
     const deviceName = this.currentSource === 'mic' ? this.devices.mic : this.devices.monitor;
     console.log(`[NativeAudio] Starting capture from: ${deviceName} (${this.currentSource}) at 16kHz mono`);
 
-    // Ultra-optimized 16kHz mono capture (80% smaller size, 10x faster upload)
+    // Pure linear16 PCM stream to stdout (compatible with Deepgram & avoids parec file error)
     this.process = spawn('parec', [
       '--format=s16le',
       '--rate=16000',
       '--channels=1',
-      '--file-format=wav',
       '-d', deviceName,
       '--latency-msec=20'
     ]);
@@ -70,15 +69,16 @@ class NativeAudioService extends EventEmitter {
       this.chunks.push(data);
       this.emit('chunk', data);
 
-      // Fast audio level calculation
+      // Fast audio level calculation from raw PCM
       let sum = 0;
       const step = 4;
-      for (let i = 44; i < data.length - 1; i += step) {
+      for (let i = 0; i < data.length - 1; i += step) {
         const sample = data.readInt16LE(i);
         sum += sample * sample;
       }
-      const rms = Math.sqrt(sum / ((data.length - 44) / (step / 2)));
-      const level = Math.min(100, Math.round((rms / 32768) * 100 * 5));
+      const count = Math.max(1, data.length / (step / 2));
+      const rms = Math.sqrt(sum / count);
+      const level = Math.min(100, Math.round((rms / 32768) * 100 * 6));
 
       this.emit('level', level);
 
@@ -118,18 +118,37 @@ class NativeAudioService extends EventEmitter {
 
   finalizeAndEmitAudio() {
     if (this.chunks.length === 0) return;
-    const fullBuffer = Buffer.concat(this.chunks);
-    this.chunks = []; // Reset for next question
+    const rawPcm = Buffer.concat(this.chunks);
+    this.chunks = [];
 
     // Only process if audio size is meaningful (> 15KB)
-    if (fullBuffer.length > 15000) {
-      const base64Audio = fullBuffer.toString('base64');
+    if (rawPcm.length > 15000) {
+      const wavBuffer = this.addWavHeader(rawPcm, 16000, 1, 16);
       this.emit('audio-ready', {
-        audioBase64: base64Audio,
+        audioBase64: wavBuffer.toString('base64'),
         mimeType: 'audio/wav',
         source: this.currentSource
       });
     }
+  }
+
+  addWavHeader(samples, sampleRate = 16000, numChannels = 1, bitDepth = 16) {
+    const buffer = Buffer.alloc(44 + samples.length);
+    buffer.write('RIFF', 0);
+    buffer.writeUInt32LE(36 + samples.length, 4);
+    buffer.write('WAVE', 8);
+    buffer.write('fmt ', 12);
+    buffer.writeUInt32LE(16, 16);
+    buffer.writeUInt16LE(1, 20); // PCM
+    buffer.writeUInt16LE(numChannels, 22);
+    buffer.writeUInt32LE(sampleRate, 24);
+    buffer.writeUInt32LE(sampleRate * numChannels * (bitDepth / 8), 28);
+    buffer.writeUInt16LE(numChannels * (bitDepth / 8), 32);
+    buffer.writeUInt16LE(bitDepth, 34);
+    buffer.write('data', 36);
+    buffer.writeUInt32LE(samples.length, 40);
+    samples.copy(buffer, 44);
+    return buffer;
   }
 
   stop() {
