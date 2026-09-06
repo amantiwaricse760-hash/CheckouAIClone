@@ -23,7 +23,7 @@ class DeepgramLiveService {
       return;
     }
 
-    const url = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&endpointing=350&sample_rate=${sampleRate}&encoding=linear16`;
+    const url = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&endpointing=300&sample_rate=${sampleRate}&encoding=linear16&channels=1`;
 
     try {
       this.ws = new WebSocket(url, {
@@ -31,6 +31,8 @@ class DeepgramLiveService {
           Authorization: `Token ${this.apiKey}`
         }
       });
+
+      let fullTranscript = "";
 
       this.ws.on('open', () => {
         this.isConnected = true;
@@ -44,16 +46,21 @@ class DeepgramLiveService {
           const transcript = alt?.transcript || "";
 
           if (transcript) {
-            const isFinal = response.is_final;
-            const isSpeechFinal = response.speech_final;
-
-            if (onTranscript) {
-              onTranscript(transcript, isFinal);
+            if (response.is_final) {
+              fullTranscript += (fullTranscript ? " " : "") + transcript;
+              if (onTranscript) onTranscript(fullTranscript, true);
+            } else {
+              const preview = fullTranscript + (fullTranscript ? " " : "") + transcript;
+              if (onTranscript) onTranscript(preview, false);
             }
 
-            // Interviewer finished sentence/question (<350ms pause)
-            if (isSpeechFinal && onSentenceComplete) {
-              onSentenceComplete(transcript);
+            // Detect end of question
+            if (response.speech_final && fullTranscript.trim().length > 3) {
+              const finalQuestion = fullTranscript.trim();
+              fullTranscript = "";
+              if (onSentenceComplete) {
+                onSentenceComplete(finalQuestion);
+              }
             }
           }
         } catch (e) {
