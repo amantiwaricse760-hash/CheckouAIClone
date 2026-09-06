@@ -67,7 +67,9 @@ function createWindow() {
     frame: false,
     transparent: true,
     alwaysOnTop: true,
-    skipTaskbar: false,
+    skipTaskbar: true, // NEVER show icon in Windows taskbar
+    type: 'toolbar', // Win32 Tool Window: excluded from Alt+Tab and browser window pickers
+    title: '', // Disguised empty title
     resizable: true,
     hasShadow: false,
     webPreferences: {
@@ -79,13 +81,19 @@ function createWindow() {
   });
 
   // CRITICAL STEALTH FEATURE: Invisibility from screen share recorders
-  // Works on Windows, macOS, and supported Linux X11/Wayland compositors
-  try {
-    mainWindow.setContentProtection(true);
-    console.log("[Stealth] Content protection enabled (Window excluded from screen captures)");
-  } catch (e) {
-    console.warn("[Stealth] setContentProtection not supported on this compositor:", e);
-  }
+  // Reinforce on creation, ready-to-show, and show to guarantee Windows DWM exclusion
+  const applyStealthProtection = () => {
+    try {
+      mainWindow.setContentProtection(true);
+      console.log("[Stealth] Content protection reinforced (Window excluded from screen captures)");
+    } catch (e) {
+      console.warn("[Stealth] setContentProtection not supported on this compositor:", e);
+    }
+  };
+
+  applyStealthProtection();
+  mainWindow.once('ready-to-show', applyStealthProtection);
+  mainWindow.on('show', applyStealthProtection);
 
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
