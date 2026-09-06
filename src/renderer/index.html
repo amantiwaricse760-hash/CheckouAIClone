@@ -10,86 +10,114 @@
   <div class="hud-container" id="hudContainer">
     <!-- Header / Drag Bar -->
     <header class="drag-bar">
-      <div class="header-left">
-        <span class="hud-logo">🦅 COPILOT</span>
+      <div class="drag-handle-pill" title="Click and drag anywhere on this bar to reposition">
+        <span class="grip-dots">⠿</span>
+        <span class="hud-logo">COPILOT AI</span>
+      </div>
+
+      <div class="header-center no-drag">
         <span class="status-indicator" id="statusBadge">
           <span class="status-pulse" id="statusPulse"></span>
           <span id="statusLabel">Ready</span>
         </span>
       </div>
+
       <div class="header-right no-drag">
-        <button class="icon-btn" id="btnPhone" title="Phone Companion (Invisible Mode)">📱</button>
-        <button class="icon-btn" id="btnGhost" title="Toggle Click-Through Ghost Mode (Ctrl+Shift+G)">👻</button>
-        <button class="icon-btn" id="btnSettings" title="Profile & API Settings">⚙️</button>
+        <button class="top-btn" id="btnMiniDock" title="Toggle Compact Mini-Dock Mode">🗖 Mini</button>
+        <button class="top-btn" id="btnPhone" title="Phone Companion (Invisible on Screen Share)">📱 Phone</button>
+        <button class="top-btn" id="btnGhost" title="Click-Through Ghost Mode (Ctrl+Shift+G)">👻 Ghost</button>
+        <button class="icon-btn" id="btnSettings" title="Profile & Resume Settings">⚙️</button>
         <button class="icon-btn" id="btnMinimize" title="Minimize">_</button>
-        <button class="icon-btn" id="btnHide" title="Emergency Hide (Ctrl+Shift+H)">✕</button>
+        <button class="icon-btn panic-btn" id="btnHide" title="Emergency Hide (Ctrl+Shift+H)">✕</button>
       </div>
     </header>
 
-    <!-- Toolbar: Audio Controls & Opacity -->
-    <div class="toolbar no-drag">
-      <div class="toolbar-group">
-        <button class="listen-btn" id="btnListen">
-          <span class="mic-icon">🎙️</span>
-          <span id="listenText">Start Listening</span>
-        </button>
-        <button class="small-btn" id="btnAudioSource" title="Toggle Mic / System Audio">System + Mic</button>
-      </div>
-      <div class="toolbar-group">
-        <label class="opacity-label">Opacity</label>
-        <input type="range" id="opacitySlider" min="25" max="100" value="90" title="HUD Transparency">
-      </div>
-    </div>
-
-    <!-- Mode Selector Pills -->
-    <div class="mode-bar no-drag">
-      <button class="mode-pill active" data-mode="points">⚡ Points</button>
-      <button class="mode-pill" data-mode="desi">🇮🇳 Desi Mode</button>
-      <button class="mode-pill" data-mode="code">💻 Code Only</button>
-      <button class="mode-pill" data-mode="deep">📖 Deep Dive</button>
-    </div>
-
-    <!-- Live Interviewer Question Card -->
-    <div class="section-card question-card">
-      <div class="card-header no-drag">
-        <span class="card-title">Interviewer Question</span>
-        <span class="card-hint">Press Enter to ask</span>
-      </div>
-      <textarea id="questionInput" class="question-input no-drag" rows="2" placeholder="Listening to audio... or type question here"></textarea>
-    </div>
-
-    <!-- Live AI Answer Card -->
-    <div class="section-card answer-card">
-      <div class="card-header no-drag">
-        <div class="card-title-group">
-          <span class="card-title">Live Answer</span>
-          <span class="model-tag">Gemini 2.0 Flash</span>
+    <!-- Main Body (Hidden when in Mini Dock Mode) -->
+    <div class="hud-body" id="hudBody">
+      <!-- Toolbar: Audio Controls, Font Size & Opacity -->
+      <div class="toolbar no-drag">
+        <div class="toolbar-left">
+          <button class="listen-btn" id="btnListen">
+            <span class="mic-icon">🎙️</span>
+            <span id="listenText">Start Listening</span>
+          </button>
+          <button class="chip-btn" id="btnAudioSource" title="Toggle Audio Stream Source">🔊 System + Mic</button>
         </div>
-        <div class="card-actions">
-          <button class="text-btn" id="btnCopy">📋 Copy</button>
-          <button class="text-btn" id="btnClear">🗑️ Clear</button>
+
+        <div class="toolbar-right">
+          <!-- Font Size Adjusters -->
+          <div class="font-controls" title="Adjust Text Size">
+            <button class="font-btn" id="btnFontDec">A-</button>
+            <button class="font-btn" id="btnFontInc">A+</button>
+          </div>
+
+          <!-- Opacity Controls -->
+          <div class="opacity-controls">
+            <span class="opacity-label">HUD:</span>
+            <button class="opacity-chip" data-val="100">100%</button>
+            <button class="opacity-chip active" data-val="85">85%</button>
+            <button class="opacity-chip" data-val="60">60%</button>
+            <input type="range" id="opacitySlider" min="25" max="100" value="85" title="Fine-tune transparency">
+          </div>
         </div>
       </div>
-      <div class="answer-content no-drag" id="answerDisplay">
-        <div class="placeholder-text">
-          When the interviewer speaks, bullet-point answers and code snippets will stream here instantly.
+
+      <!-- Answering Style Bar -->
+      <div class="mode-bar no-drag">
+        <span class="mode-bar-label">STYLE:</span>
+        <button class="mode-pill active" data-mode="points" title="Concise bullet points for rapid reading">⚡ Quick Points</button>
+        <button class="mode-pill" data-mode="desi" title="Natural Indian professional conversational tone">🇮🇳 Desi Mode</button>
+        <button class="mode-pill" data-mode="code" title="Clean algorithmic code with Big-O analysis">💻 Code Solution</button>
+        <button class="mode-pill" data-mode="deep" title="In-depth system design & architecture">📖 Deep Dive</button>
+      </div>
+
+      <!-- Live Interviewer Question Card -->
+      <div class="section-card question-card">
+        <div class="card-header no-drag">
+          <span class="card-title">Interviewer Question</span>
+          <div class="card-actions">
+            <button class="action-chip primary" id="btnAskNow">⚡ Get Answer (Enter)</button>
+          </div>
+        </div>
+        <textarea id="questionInput" class="question-input no-drag" rows="2" placeholder="Listening to interviewer's voice... or type question here"></textarea>
+      </div>
+
+      <!-- Live AI Answer Card -->
+      <div class="section-card answer-card">
+        <div class="card-header no-drag">
+          <div class="card-title-group">
+            <span class="card-title">Live Answer</span>
+            <span class="model-tag">Gemini Flash</span>
+          </div>
+          <div class="card-actions">
+            <button class="action-chip" id="btnRegen" title="Regenerate from another angle">🔄 Re-Answer</button>
+            <button class="action-chip" id="btnMoreDetails" title="Explain with more depth">➕ More Details</button>
+            <button class="action-chip" id="btnCopy" title="Copy answer to clipboard">📋 Copy</button>
+            <button class="action-chip danger" id="btnClear" title="Clear current answer">🧹 Clear</button>
+          </div>
+        </div>
+        <div class="answer-content no-drag" id="answerDisplay">
+          <div class="placeholder-text">
+            When your interviewer speaks, bullet-point answers and code snippets will stream here instantly.
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- Footer Shortcuts -->
-    <footer class="hud-footer">
-      <span>Panic Hide: <code>Ctrl+Shift+H</code></span>
-      <span>Ghost Mode: <code>Ctrl+Shift+G</code></span>
-      <span>Clear: <code>Ctrl+Shift+C</code></span>
-    </footer>
+      <!-- Footer Shortcuts -->
+      <footer class="hud-footer">
+        <span>Hide: <code>Ctrl+Shift+H</code></span>
+        <span>Ghost: <code>Ctrl+Shift+G</code></span>
+        <span>Clear: <code>Ctrl+Shift+C</code></span>
+        <span>Screen Protection: <span class="shield-badge">🛡️ ACTIVE</span></span>
+      </footer>
+    </div>
   </div>
 
   <!-- Settings & Profile Modal -->
   <div class="modal-overlay no-drag" id="settingsModal" style="display: none;">
     <div class="modal-content">
       <div class="modal-header">
-        <h3>Copilot Configuration</h3>
+        <h3>Copilot Configuration & Resume</h3>
         <button class="icon-btn" id="btnCloseSettings">✕</button>
       </div>
       <div class="modal-body">
@@ -121,17 +149,17 @@
   <div class="modal-overlay no-drag" id="phoneModal" style="display: none;">
     <div class="modal-content phone-modal">
       <div class="modal-header">
-        <h3>📱 Invisible Phone Mode</h3>
+        <h3>📱 Invisible Phone Companion</h3>
         <button class="icon-btn" id="btnClosePhone">✕</button>
       </div>
       <div class="modal-body">
         <p class="phone-tip">
-          Want <strong>100% zero trace</strong> on your laptop during high-stakes screen sharing?
+          Want <strong>100% zero trace</strong> on your laptop during screen sharing?
         </p>
-        <p>Open this private URL on your phone or tablet (connected to the same Wi-Fi):</p>
+        <p>Open this private URL on your phone or tablet:</p>
         <div class="phone-url-box" id="phoneUrlBox">http://192.168.1.5:3890</div>
         <p class="phone-note">
-          Answers will stream directly to your phone screen sitting propped under your laptop monitor. You can hide this desktop window completely!
+          Answers stream directly to your phone screen placed below your laptop monitor. You can hide this desktop window completely using <code>Ctrl+Shift+H</code>!
         </p>
       </div>
       <div class="modal-footer">

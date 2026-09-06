@@ -164,6 +164,10 @@ ipcMain.on('hide-app', () => {
   if (mainWindow) mainWindow.hide();
 });
 
+ipcMain.on('set-window-size', (event, { width, height }) => {
+  if (mainWindow) mainWindow.setSize(width, height, true);
+});
+
 ipcMain.on('close-app', () => {
   if (mainWindow) mainWindow.close();
 });

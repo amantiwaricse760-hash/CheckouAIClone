@@ -2,9 +2,12 @@
 let currentMode = 'points';
 let isListening = false;
 let isGhostMode = false;
+let isMiniDock = false;
+let baseFontSize = 14;
 let recognition = null;
 let profileData = {};
 let lanUrl = '';
+let currentQuestion = '';
 
 // DOM Elements
 const hudContainer = document.getElementById('hudContainer');
@@ -16,18 +19,27 @@ const btnListen = document.getElementById('btnListen');
 const listenText = document.getElementById('listenText');
 const btnAudioSource = document.getElementById('btnAudioSource');
 const opacitySlider = document.getElementById('opacitySlider');
+const opacityChips = document.querySelectorAll('.opacity-chip');
 
 const modePills = document.querySelectorAll('.mode-pill');
 const questionInput = document.getElementById('questionInput');
 const answerDisplay = document.getElementById('answerDisplay');
 
+const btnAskNow = document.getElementById('btnAskNow');
+const btnRegen = document.getElementById('btnRegen');
+const btnMoreDetails = document.getElementById('btnMoreDetails');
 const btnCopy = document.getElementById('btnCopy');
 const btnClear = document.getElementById('btnClear');
+
+const btnMiniDock = document.getElementById('btnMiniDock');
 const btnPhone = document.getElementById('btnPhone');
 const btnGhost = document.getElementById('btnGhost');
 const btnSettings = document.getElementById('btnSettings');
 const btnMinimize = document.getElementById('btnMinimize');
 const btnHide = document.getElementById('btnHide');
+
+const btnFontInc = document.getElementById('btnFontInc');
+const btnFontDec = document.getElementById('btnFontDec');
 
 // Modals
 const settingsModal = document.getElementById('settingsModal');
@@ -78,7 +90,8 @@ async function init() {
 
     window.copilotAPI.onGhostModeChanged((ghost) => {
       isGhostMode = ghost;
-      btnGhost.style.background = isGhostMode ? 'rgba(56, 189, 248, 0.3)' : 'transparent';
+      btnGhost.style.background = isGhostMode ? 'rgba(56, 189, 248, 0.3)' : 'rgba(255, 255, 255, 0.07)';
+      btnGhost.style.color = isGhostMode ? '#38bdf8' : '#94a3b8';
     });
 
     window.copilotAPI.onClearRequest(() => {
@@ -93,7 +106,6 @@ async function init() {
       }
     });
   } else {
-    // Browser Localhost Fallback: Connect directly via WebSocket
     setupBrowserSocket();
   }
 
@@ -178,13 +190,10 @@ function renderMarkdown(rawText) {
   answerDisplay.scrollTop = answerDisplay.scrollHeight;
 }
 
-// Speech-to-Text Setup (Browser/Electron Web Speech Engine)
+// Speech-to-Text Setup
 function setupSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    console.warn("Web Speech API not directly supported in this renderer environment.");
-    return;
-  }
+  if (!SpeechRecognition) return;
 
   recognition = new SpeechRecognition();
   recognition.continuous = true;
@@ -206,7 +215,7 @@ function setupSpeechRecognition() {
     const currentText = finalTranscript || interim;
     questionInput.value = currentText;
 
-    // Detect question end pause to trigger answer
+    // Auto trigger if final pause is detected
     if (finalTranscript.trim().length > 10) {
       triggerAsk(finalTranscript.trim());
       finalTranscript = '';
@@ -214,7 +223,6 @@ function setupSpeechRecognition() {
   };
 
   recognition.onerror = (event) => {
-    console.error("Speech Recognition error:", event.error);
     if (event.error === 'not-allowed') {
       setStatus('error', 'Mic blocked');
     }
@@ -222,25 +230,35 @@ function setupSpeechRecognition() {
 
   recognition.onend = () => {
     if (isListening) {
-      recognition.start(); // Keep listening continuously
+      recognition.start();
     }
   };
 }
 
-function triggerAsk(question) {
+function triggerAsk(question, extraInstruction = '') {
   if (!question || !question.trim()) return;
+  currentQuestion = question.trim();
+
+  let finalPrompt = currentQuestion;
+  if (extraInstruction) {
+    finalPrompt = `${currentQuestion}\n\n[INSTRUCTION: ${extraInstruction}]`;
+  }
+
+  // If in mini-dock mode, expand to show answer
+  if (isMiniDock) toggleMiniDock(false);
+
   setStatus('generating', 'Thinking...');
-  answerDisplay.innerHTML = '<div class="placeholder-text">Analyzing question & resume context...</div>';
+  answerDisplay.innerHTML = '<div class="placeholder-text">Analyzing question & your background...</div>';
 
   if (window.copilotAPI) {
     window.copilotAPI.askCopilot({
-      question: question.trim(),
+      question: finalPrompt,
       mode: currentMode
     });
   } else if (browserSocket && browserSocket.readyState === WebSocket.OPEN) {
     browserSocket.send(JSON.stringify({
       action: 'ask',
-      question: question.trim(),
+      question: finalPrompt,
       mode: currentMode
     }));
   }
@@ -251,7 +269,6 @@ function setMode(mode) {
   modePills.forEach(pill => {
     pill.classList.toggle('active', pill.dataset.mode === mode);
   });
-  // If there's already a question, re-ask in new mode
   if (questionInput.value.trim()) {
     triggerAsk(questionInput.value.trim());
   }
@@ -259,11 +276,35 @@ function setMode(mode) {
 
 function clearUI() {
   questionInput.value = '';
-  answerDisplay.innerHTML = '<div class="placeholder-text">When the interviewer speaks, bullet-point answers and code snippets will stream here instantly.</div>';
+  currentQuestion = '';
+  answerDisplay.innerHTML = '<div class="placeholder-text">When your interviewer speaks, bullet-point answers and code snippets will stream here instantly.</div>';
   setStatus('ready', 'Ready');
   if (browserSocket && browserSocket.readyState === WebSocket.OPEN) {
     browserSocket.send(JSON.stringify({ action: 'clear' }));
   }
+}
+
+function toggleMiniDock(forceState) {
+  isMiniDock = typeof forceState === 'boolean' ? forceState : !isMiniDock;
+  hudContainer.classList.toggle('mini-dock', isMiniDock);
+  btnMiniDock.innerText = isMiniDock ? '🗖 Expand' : '🗖 Mini';
+  btnMiniDock.style.borderColor = isMiniDock ? '#38bdf8' : 'rgba(255, 255, 255, 0.1)';
+
+  if (window.copilotAPI) {
+    if (isMiniDock) {
+      window.copilotAPI.setWindowSize({ width: 480, height: 50 });
+    } else {
+      window.copilotAPI.setWindowSize({ width: 480, height: 640 });
+    }
+  }
+}
+
+function setOpacity(val) {
+  opacitySlider.value = val;
+  hudContainer.style.background = `rgba(13, 17, 27, ${val / 100})`;
+  opacityChips.forEach(chip => {
+    chip.classList.toggle('active', parseInt(chip.dataset.val, 10) === val);
+  });
 }
 
 function setupEventListeners() {
@@ -276,9 +317,7 @@ function setupEventListeners() {
       setStatus('listening', 'Listening');
       try {
         if (recognition) recognition.start();
-      } catch (e) {
-        console.warn("Recognition already active");
-      }
+      } catch (e) {}
     } else {
       btnListen.classList.remove('active');
       listenText.innerText = 'Start Listening';
@@ -286,6 +325,28 @@ function setupEventListeners() {
       try {
         if (recognition) recognition.stop();
       } catch (e) {}
+    }
+  });
+
+  // Mini Dock Button
+  btnMiniDock.addEventListener('click', () => toggleMiniDock());
+
+  // Ask Now Button
+  btnAskNow.addEventListener('click', () => {
+    triggerAsk(questionInput.value);
+  });
+
+  // Regenerate Button
+  btnRegen.addEventListener('click', () => {
+    if (currentQuestion || questionInput.value.trim()) {
+      triggerAsk(currentQuestion || questionInput.value.trim(), 'Give a fresh, alternative angle or alternative solution.');
+    }
+  });
+
+  // More Details Button
+  btnMoreDetails.addEventListener('click', () => {
+    if (currentQuestion || questionInput.value.trim()) {
+      triggerAsk(currentQuestion || questionInput.value.trim(), 'Elaborate in greater depth with edge cases, trade-offs, and implementation details.');
     }
   });
 
@@ -302,10 +363,30 @@ function setupEventListeners() {
     }
   });
 
-  // Opacity Slider
+  // Font Size Adjusters
+  btnFontInc.addEventListener('click', () => {
+    if (baseFontSize < 22) {
+      baseFontSize += 2;
+      document.documentElement.style.setProperty('--base-font-size', `${baseFontSize}px`);
+    }
+  });
+
+  btnFontDec.addEventListener('click', () => {
+    if (baseFontSize > 11) {
+      baseFontSize -= 2;
+      document.documentElement.style.setProperty('--base-font-size', `${baseFontSize}px`);
+    }
+  });
+
+  // Opacity Slider & Chips
   opacitySlider.addEventListener('input', (e) => {
-    const val = e.target.value / 100;
-    hudContainer.style.background = `rgba(13, 17, 27, ${val})`;
+    setOpacity(parseInt(e.target.value, 10));
+  });
+
+  opacityChips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      setOpacity(parseInt(chip.dataset.val, 10));
+    });
   });
 
   // Copy Button
@@ -328,7 +409,8 @@ function setupEventListeners() {
   btnGhost.addEventListener('click', () => {
     isGhostMode = !isGhostMode;
     if (window.copilotAPI) window.copilotAPI.setGhostMode(isGhostMode);
-    btnGhost.style.background = isGhostMode ? 'rgba(56, 189, 248, 0.3)' : 'transparent';
+    btnGhost.style.background = isGhostMode ? 'rgba(56, 189, 248, 0.3)' : 'rgba(255, 255, 255, 0.07)';
+    btnGhost.style.color = isGhostMode ? '#38bdf8' : '#94a3b8';
   });
 
   // Window Controls

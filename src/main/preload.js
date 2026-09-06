@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('copilotAPI', {
   askCopilot: (data) => ipcRenderer.send('ask-copilot', data),
   broadcastClear: () => ipcRenderer.send('broadcast-clear'),
   setGhostMode: (enable) => ipcRenderer.send('set-ghost-mode', enable),
+  setWindowSize: (size) => ipcRenderer.send('set-window-size', size),
   
   minimizeApp: () => ipcRenderer.send('minimize-app'),
   hideApp: () => ipcRenderer.send('hide-app'),
