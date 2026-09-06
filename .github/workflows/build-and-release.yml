@@ -26,7 +26,9 @@ jobs:
         run: npm install
 
       - name: Build Windows .exe
-        run: npx electron-builder --win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish never
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
@@ -58,7 +60,9 @@ jobs:
         run: npm install
 
       - name: Build Linux AppImage
-        run: npx electron-builder --linux AppImage
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --linux AppImage --publish never
 
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
@@ -90,7 +94,9 @@ jobs:
         run: npm install
 
       - name: Build macOS dmg
-        run: npx electron-builder --mac dmg
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --mac dmg --publish never
 
       - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
