@@ -63,27 +63,14 @@ class NativeAudioService extends EventEmitter {
   }
 
   mixPcm(bufA, bufB) {
-    if (!bufA && !bufB) return Buffer.alloc(0);
-    if (!bufA) return bufB;
-    if (!bufB) return bufA;
-
-    const len = Math.max(bufA.length, bufB.length);
-    const out = Buffer.alloc(len);
-    for (let i = 0; i < len; i += 2) {
-      const a = i < bufA.length ? bufA.readInt16LE(i) : 0;
-      const b = i < bufB.length ? bufB.readInt16LE(i) : 0;
-      let sum = a + b;
-      if (sum > 32767) sum = 32767;
-      else if (sum < -32768) sum = -32768;
-      out.writeInt16LE(sum, i);
-    }
-    return out;
+    return bufA; // Deprecated: direct stream routing used to eliminate phase jitter
   }
 
   ensureOptimalVolume() {
     try {
       if (this.devices.mic && this.devices.mic !== 'default') {
         execSync(`pactl set-source-volume ${this.devices.mic} 85%`, { stdio: 'ignore' });
+        execSync(`pactl set-source-mute ${this.devices.mic} 0`, { stdio: 'ignore' });
       }
     } catch (e) {}
   }
@@ -93,12 +80,11 @@ class NativeAudioService extends EventEmitter {
     this.ensureOptimalVolume();
     this.isRecording = true;
     this.isSpeaking = false;
-    this.monQueue = [];
-    this.micQueue = [];
+    this.lastActiveSource = 'mic';
 
-    console.log(`[NativeAudio] Active capture mode: "${this.currentSource}" | Mic: ${this.devices.mic} | Meet: ${this.devices.monitor}`);
+    console.log(`[NativeAudio] Clean stream active: "${this.currentSource}" | Mic: ${this.devices.mic} | Meet: ${this.devices.monitor}`);
 
-    // 1. Microphone capture (Candidate voice)
+    // 1. Microphone capture (Candidate voice - 100% pure PCM)
     if (this.currentSource === 'both' || this.currentSource === 'mic') {
       this.micProcess = spawn('parec', [
         '--format=s16le',
@@ -110,7 +96,7 @@ class NativeAudioService extends EventEmitter {
 
       this.micProcess.stdout.on('data', (data) => {
         if (!this.isRecording) return;
-        this.handleIncomingAudio(data, 'mic');
+        this.routeAudioData(data, 'mic');
       });
 
       this.micProcess.stderr.on('data', (e) => {
@@ -118,7 +104,7 @@ class NativeAudioService extends EventEmitter {
       });
     }
 
-    // 2. Google Meet monitor capture (Interviewer voice)
+    // 2. Google Meet monitor capture (Interviewer voice - 100% pure PCM)
     if (this.currentSource === 'both' || this.currentSource === 'monitor') {
       this.monProcess = spawn('parec', [
         '--format=s16le',
@@ -130,7 +116,7 @@ class NativeAudioService extends EventEmitter {
 
       this.monProcess.stdout.on('data', (data) => {
         if (!this.isRecording) return;
-        this.handleIncomingAudio(data, 'monitor');
+        this.routeAudioData(data, 'monitor');
       });
 
       this.monProcess.stderr.on('data', (e) => {
@@ -151,45 +137,38 @@ class NativeAudioService extends EventEmitter {
     }, 80);
   }
 
-  handleIncomingAudio(data, source) {
+  routeAudioData(data, source) {
     const level = this.calculateLevel(data);
 
-    if (this.currentSource !== 'both') {
-      // Single source mode
-      this.emit('chunk', data);
-      this.emit('level', level);
-      this.checkVoiceActivity(level);
+    if (this.currentSource === 'mic') {
+      if (source === 'mic') {
+        this.emit('chunk', data);
+        this.emit('level', level);
+        this.checkVoiceActivity(level);
+      }
       return;
     }
 
-    // Dual source mode: balance and mix
-    if (source === 'mic') {
-      this.micQueue.push(data);
-    } else {
-      this.monQueue.push(data);
+    if (this.currentSource === 'monitor') {
+      if (source === 'monitor') {
+        this.emit('chunk', data);
+        this.emit('level', level);
+        this.checkVoiceActivity(level);
+      }
+      return;
     }
 
-    if (this.micQueue.length > 0 && this.monQueue.length > 0) {
-      const micChunk = this.micQueue.shift();
-      const monChunk = this.monQueue.shift();
-      const mixed = this.mixPcm(micChunk, monChunk);
-      const combinedLevel = Math.max(this.calculateLevel(micChunk), this.calculateLevel(monChunk));
+    // Dual 'both' mode:
+    // Seamless direct routing: Whichever stream has active voice or recent voice is emitted directly
+    // This avoids queue phase mismatch, sample rate tearing, or time dilation
+    if (level > 6) {
+      this.lastActiveSource = source;
+    }
 
-      this.emit('chunk', mixed);
-      this.emit('level', combinedLevel);
-      this.checkVoiceActivity(combinedLevel);
-    } else if (this.micQueue.length > 4) {
-      const micChunk = this.micQueue.shift();
-      const lvl = this.calculateLevel(micChunk);
-      this.emit('chunk', micChunk);
-      this.emit('level', lvl);
-      this.checkVoiceActivity(lvl);
-    } else if (this.monQueue.length > 4) {
-      const monChunk = this.monQueue.shift();
-      const lvl = this.calculateLevel(monChunk);
-      this.emit('chunk', monChunk);
-      this.emit('level', lvl);
-      this.checkVoiceActivity(lvl);
+    if (source === this.lastActiveSource) {
+      this.emit('chunk', data);
+      this.emit('level', level);
+      this.checkVoiceActivity(level);
     }
   }
 
@@ -219,8 +198,6 @@ class NativeAudioService extends EventEmitter {
       this.monProcess.kill();
       this.monProcess = null;
     }
-    this.micQueue = [];
-    this.monQueue = [];
   }
 }
 
