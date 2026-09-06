@@ -215,14 +215,19 @@ function renderMarkdown(rawText) {
   answerDisplay.scrollTop = answerDisplay.scrollHeight;
 }
 
-// Audio Capture Engine (Gemini Multimodal)
-let currentAudioSource = 'monitor'; // 'monitor' = Google Meet / System Audio, 'mic' = Microphone
+// Audio Capture Engine (Dual-Stream PulseAudio)
+let currentAudioSource = 'both'; // 'both' = Google Meet + Mic, 'monitor' = Meet only, 'mic' = Mic only
 
 async function startAudioCapture() {
   isListening = true;
   btnListen.classList.add('active');
   listenText.innerText = 'Listening...';
-  setStatus('listening', currentAudioSource === 'monitor' ? 'Listening to Meet...' : 'Listening to Mic...');
+  const statusLabels = {
+    both: 'Listening (Meet + Mic)...',
+    monitor: 'Listening to Meet...',
+    mic: 'Listening to Mic...'
+  };
+  setStatus('listening', statusLabels[currentAudioSource] || 'Listening...');
 
   if (window.copilotAPI && window.copilotAPI.startNativeAudio) {
     window.copilotAPI.startNativeAudio({ source: currentAudioSource, mode: currentMode });
@@ -454,16 +459,39 @@ function setupEventListeners() {
   });
 
   // Toggle Google Meet vs Mic Audio
-  btnAudioSource.innerText = '🎧 Google Meet (Interviewer)';
+  const updateAudioBtn = () => {
+    if (currentAudioSource === 'both') {
+      btnAudioSource.innerText = '🔊 Meet + Mic (All Audio)';
+      btnAudioSource.style.borderColor = '#22c55e';
+      btnAudioSource.style.color = '#4ade80';
+    } else if (currentAudioSource === 'monitor') {
+      btnAudioSource.innerText = '🎧 Google Meet (Interviewer)';
+      btnAudioSource.style.borderColor = '#38bdf8';
+      btnAudioSource.style.color = '#38bdf8';
+    } else {
+      btnAudioSource.innerText = '🎙️ Microphone (Me)';
+      btnAudioSource.style.borderColor = '#a855f7';
+      btnAudioSource.style.color = '#c084fc';
+    }
+  };
+
+  updateAudioBtn();
   btnAudioSource.addEventListener('click', () => {
-    currentAudioSource = currentAudioSource === 'monitor' ? 'mic' : 'monitor';
-    btnAudioSource.innerText = currentAudioSource === 'monitor' ? '🎧 Google Meet (Interviewer)' : '🎙️ Microphone (Me)';
-    btnAudioSource.style.borderColor = currentAudioSource === 'monitor' ? '#38bdf8' : 'rgba(255, 255, 255, 0.1)';
+    if (currentAudioSource === 'both') currentAudioSource = 'monitor';
+    else if (currentAudioSource === 'monitor') currentAudioSource = 'mic';
+    else currentAudioSource = 'both';
+
+    updateAudioBtn();
     if (window.copilotAPI && window.copilotAPI.setNativeAudioSource) {
       window.copilotAPI.setNativeAudioSource(currentAudioSource);
     }
     if (isListening) {
-      setStatus('listening', currentAudioSource === 'monitor' ? 'Listening to Meet...' : 'Listening to Mic...');
+      const labels = {
+        both: 'Listening (Meet + Mic)...',
+        monitor: 'Listening to Meet...',
+        mic: 'Listening to Mic...'
+      };
+      setStatus('listening', labels[currentAudioSource] || 'Listening...');
     }
   });
 

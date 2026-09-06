@@ -213,7 +213,7 @@ app.on('will-quit', () => {
 ipcMain.on('start-native-audio', (event, { source, mode }) => {
   if (nativeAudio) {
     currentActiveMode = mode || 'points';
-    nativeAudio.setSource(source || 'monitor');
+    nativeAudio.setSource(source || 'both');
 
     if (deepgramService && deepgramService.apiKey) {
       deepgramService.startStreaming({

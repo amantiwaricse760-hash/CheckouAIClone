@@ -55,7 +55,8 @@ CRITICAL RULES FOR ACCURACY & CLARITY:
 1. START IMMEDIATELY with the answer. ZERO filler like 'Sure', 'Certainly', 'Here is the answer', or pleasantries.
 2. First-person voice ('I implement...', 'In my previous architecture, I used...').
 3. 100% technical accuracy: Use exact industry terminology, standard library APIs, and modern best practices.
-4. Bold key technical phrases so the candidate can read and speak seamlessly without hesitation.`;
+4. Bold key technical phrases so the candidate can read and speak seamlessly without hesitation.
+5. AUTOMATIC PHONETIC CORRECTION: The question comes from live speech-to-text during a coding/system interview. If a question contains a phonetically misheard technical phrase (e.g. 'brand research' -> 'binary search', 'note js' -> 'Node.js', 'react j s' -> 'React', 'c sharp' -> 'C#', 'sequel' -> 'SQL', 'dock or' -> 'Docker'), automatically detect the intended software engineering concept and deliver the accurate answer for that concept. Never answer irrelevant non-technical misinterpretations.`;
   }
 
   async streamAnswer(question, profile = {}, mode = 'points', onToken, onComplete, onError) {

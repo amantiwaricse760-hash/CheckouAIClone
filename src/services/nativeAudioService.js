@@ -1,6 +1,7 @@
 /**
- * Native Linux PulseAudio Capture Service
- * Directly records from Google Meet / System Audio monitor with 0 lag
+ * Native Linux PulseAudio Dual-Stream Capture Service
+ * Captures BOTH Interviewer (Google Meet monitor) AND Candidate (Microphone) simultaneously
+ * Zero missed words, 100% crystal-clear 16kHz linear PCM
  */
 
 const { spawn, execSync } = require('child_process');
@@ -9,17 +10,20 @@ const EventEmitter = require('events');
 class NativeAudioService extends EventEmitter {
   constructor() {
     super();
-    this.process = null;
+    this.micProcess = null;
+    this.monProcess = null;
     this.isRecording = false;
-    this.chunks = [];
-    this.currentSource = 'monitor'; // 'monitor' (Google Meet/Interviewer) or 'mic' (User)
+    this.currentSource = 'both'; // 'both' (Google Meet + Mic), 'monitor' (Meet only), or 'mic' (Mic only)
     this.devices = this.detectDevices();
-    
+
     this.lastSoundTime = 0;
     this.isSpeaking = false;
     this.speechStartTime = 0;
-    this.silenceThreshold = 750; // 750ms of silence to trigger answer (ultra-fast!)
+    this.silenceThreshold = 550;
     this.silenceCheckInterval = null;
+
+    this.monQueue = [];
+    this.micQueue = [];
   }
 
   detectDevices() {
@@ -39,116 +43,156 @@ class NativeAudioService extends EventEmitter {
   }
 
   setSource(sourceType) {
-    this.currentSource = sourceType === 'mic' ? 'mic' : 'monitor';
+    this.currentSource = sourceType || 'both';
     if (this.isRecording) {
       this.stop();
       this.start();
     }
   }
 
+  calculateLevel(buffer) {
+    let sum = 0;
+    const step = 4;
+    for (let i = 0; i < buffer.length - 1; i += step) {
+      const sample = buffer.readInt16LE(i);
+      sum += sample * sample;
+    }
+    const count = Math.max(1, buffer.length / (step / 2));
+    const rms = Math.sqrt(sum / count);
+    return Math.min(100, Math.round((rms / 32768) * 100 * 6));
+  }
+
+  mixPcm(bufA, bufB) {
+    if (!bufA && !bufB) return Buffer.alloc(0);
+    if (!bufA) return bufB;
+    if (!bufB) return bufA;
+
+    const len = Math.max(bufA.length, bufB.length);
+    const out = Buffer.alloc(len);
+    for (let i = 0; i < len; i += 2) {
+      const a = i < bufA.length ? bufA.readInt16LE(i) : 0;
+      const b = i < bufB.length ? bufB.readInt16LE(i) : 0;
+      let sum = a + b;
+      if (sum > 32767) sum = 32767;
+      else if (sum < -32768) sum = -32768;
+      out.writeInt16LE(sum, i);
+    }
+    return out;
+  }
+
   start() {
     if (this.isRecording) return;
-    this.chunks = [];
     this.isRecording = true;
     this.isSpeaking = false;
+    this.monQueue = [];
+    this.micQueue = [];
 
-    const deviceName = this.currentSource === 'mic' ? this.devices.mic : this.devices.monitor;
-    console.log(`[NativeAudio] Starting capture from: ${deviceName} (${this.currentSource}) at 16kHz mono`);
+    console.log(`[NativeAudio] Active capture mode: "${this.currentSource}" | Mic: ${this.devices.mic} | Meet: ${this.devices.monitor}`);
 
-    // Pure linear16 PCM stream to stdout (compatible with Deepgram & avoids parec file error)
-    this.process = spawn('parec', [
-      '--format=s16le',
-      '--rate=16000',
-      '--channels=1',
-      '-d', deviceName,
-      '--latency-msec=20'
-    ]);
+    // 1. Microphone capture (Candidate voice)
+    if (this.currentSource === 'both' || this.currentSource === 'mic') {
+      this.micProcess = spawn('parec', [
+        '--format=s16le',
+        '--rate=16000',
+        '--channels=1',
+        '-d', this.devices.mic,
+        '--latency-msec=20'
+      ]);
 
-    this.process.stdout.on('data', (data) => {
-      if (!this.isRecording) return;
-      this.chunks.push(data);
-      this.emit('chunk', data);
+      this.micProcess.stdout.on('data', (data) => {
+        if (!this.isRecording) return;
+        this.handleIncomingAudio(data, 'mic');
+      });
 
-      // Fast audio level calculation from raw PCM
-      let sum = 0;
-      const step = 4;
-      for (let i = 0; i < data.length - 1; i += step) {
-        const sample = data.readInt16LE(i);
-        sum += sample * sample;
-      }
-      const count = Math.max(1, data.length / (step / 2));
-      const rms = Math.sqrt(sum / count);
-      const level = Math.min(100, Math.round((rms / 32768) * 100 * 6));
+      this.micProcess.stderr.on('data', (e) => {
+        console.error('[NativeAudio mic error]:', e.toString());
+      });
+    }
 
-      this.emit('level', level);
+    // 2. Google Meet monitor capture (Interviewer voice)
+    if (this.currentSource === 'both' || this.currentSource === 'monitor') {
+      this.monProcess = spawn('parec', [
+        '--format=s16le',
+        '--rate=16000',
+        '--channels=1',
+        '-d', this.devices.monitor,
+        '--latency-msec=20'
+      ]);
 
-      // Voice Activity Detection
-      if (level > 8) {
-        if (!this.isSpeaking) {
-          this.isSpeaking = true;
-          this.speechStartTime = Date.now();
-          this.emit('speech-start');
-        }
-        this.lastSoundTime = Date.now();
-      }
-    });
+      this.monProcess.stdout.on('data', (data) => {
+        if (!this.isRecording) return;
+        this.handleIncomingAudio(data, 'monitor');
+      });
 
-    this.process.stderr.on('data', (err) => {
-      console.error("[NativeAudio] parec error:", err.toString());
-    });
+      this.monProcess.stderr.on('data', (e) => {
+        console.error('[NativeAudio monitor error]:', e.toString());
+      });
+    }
 
-    this.process.on('close', (code) => {
-      this.isRecording = false;
-    });
-
-    // High-frequency silence monitor (checks every 75ms)
+    // Silence monitor
     this.silenceCheckInterval = setInterval(() => {
       if (!this.isRecording || !this.isSpeaking) return;
 
       const silenceDuration = Date.now() - this.lastSoundTime;
       const totalSpeechDuration = Date.now() - this.speechStartTime;
 
-      if (silenceDuration > this.silenceThreshold && totalSpeechDuration > 600) {
-        console.log(`[NativeAudio] Question ended (${silenceDuration}ms silence). Triggering answer!`);
+      if (silenceDuration > this.silenceThreshold && totalSpeechDuration > 500) {
         this.isSpeaking = false;
-        this.finalizeAndEmitAudio();
       }
-    }, 75);
+    }, 80);
   }
 
-  finalizeAndEmitAudio() {
-    if (this.chunks.length === 0) return;
-    const rawPcm = Buffer.concat(this.chunks);
-    this.chunks = [];
+  handleIncomingAudio(data, source) {
+    const level = this.calculateLevel(data);
 
-    // Only process if audio size is meaningful (> 15KB)
-    if (rawPcm.length > 15000) {
-      const wavBuffer = this.addWavHeader(rawPcm, 16000, 1, 16);
-      this.emit('audio-ready', {
-        audioBase64: wavBuffer.toString('base64'),
-        mimeType: 'audio/wav',
-        source: this.currentSource
-      });
+    if (this.currentSource !== 'both') {
+      // Single source mode
+      this.emit('chunk', data);
+      this.emit('level', level);
+      this.checkVoiceActivity(level);
+      return;
+    }
+
+    // Dual source mode: balance and mix
+    if (source === 'mic') {
+      this.micQueue.push(data);
+    } else {
+      this.monQueue.push(data);
+    }
+
+    if (this.micQueue.length > 0 && this.monQueue.length > 0) {
+      const micChunk = this.micQueue.shift();
+      const monChunk = this.monQueue.shift();
+      const mixed = this.mixPcm(micChunk, monChunk);
+      const combinedLevel = Math.max(this.calculateLevel(micChunk), this.calculateLevel(monChunk));
+
+      this.emit('chunk', mixed);
+      this.emit('level', combinedLevel);
+      this.checkVoiceActivity(combinedLevel);
+    } else if (this.micQueue.length > 4) {
+      const micChunk = this.micQueue.shift();
+      const lvl = this.calculateLevel(micChunk);
+      this.emit('chunk', micChunk);
+      this.emit('level', lvl);
+      this.checkVoiceActivity(lvl);
+    } else if (this.monQueue.length > 4) {
+      const monChunk = this.monQueue.shift();
+      const lvl = this.calculateLevel(monChunk);
+      this.emit('chunk', monChunk);
+      this.emit('level', lvl);
+      this.checkVoiceActivity(lvl);
     }
   }
 
-  addWavHeader(samples, sampleRate = 16000, numChannels = 1, bitDepth = 16) {
-    const buffer = Buffer.alloc(44 + samples.length);
-    buffer.write('RIFF', 0);
-    buffer.writeUInt32LE(36 + samples.length, 4);
-    buffer.write('WAVE', 8);
-    buffer.write('fmt ', 12);
-    buffer.writeUInt32LE(16, 16);
-    buffer.writeUInt16LE(1, 20); // PCM
-    buffer.writeUInt16LE(numChannels, 22);
-    buffer.writeUInt32LE(sampleRate, 24);
-    buffer.writeUInt32LE(sampleRate * numChannels * (bitDepth / 8), 28);
-    buffer.writeUInt16LE(numChannels * (bitDepth / 8), 32);
-    buffer.writeUInt16LE(bitDepth, 34);
-    buffer.write('data', 36);
-    buffer.writeUInt32LE(samples.length, 40);
-    samples.copy(buffer, 44);
-    return buffer;
+  checkVoiceActivity(level) {
+    if (level > 8) {
+      if (!this.isSpeaking) {
+        this.isSpeaking = true;
+        this.speechStartTime = Date.now();
+        this.emit('speech-start');
+      }
+      this.lastSoundTime = Date.now();
+    }
   }
 
   stop() {
@@ -158,11 +202,16 @@ class NativeAudioService extends EventEmitter {
       clearInterval(this.silenceCheckInterval);
       this.silenceCheckInterval = null;
     }
-    if (this.process) {
-      this.process.kill();
-      this.process = null;
+    if (this.micProcess) {
+      this.micProcess.kill();
+      this.micProcess = null;
     }
-    this.finalizeAndEmitAudio();
+    if (this.monProcess) {
+      this.monProcess.kill();
+      this.monProcess = null;
+    }
+    this.micQueue = [];
+    this.monQueue = [];
   }
 }
 

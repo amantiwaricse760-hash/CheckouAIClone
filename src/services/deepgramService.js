@@ -45,7 +45,19 @@ class DeepgramLiveService {
     }
 
     const sampleRate = this.streamConfig?.sampleRate || 16000;
-    const url = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&sample_rate=${sampleRate}&encoding=linear16&channels=1`;
+    
+    // Boost software engineering & technical interview terminology
+    const techKeyterms = [
+      'binary search', 'algorithm', 'data structures', 'time complexity', 'space complexity',
+      'Big O', 'recursion', 'dynamic programming', 'linked list', 'hash map', 'binary tree',
+      'graph', 'depth first search', 'breadth first search', 'microservices', 'database',
+      'SQL', 'indexing', 'polymorphism', 'inheritance', 'React', 'Node.js', 'TypeScript',
+      'Python', 'REST API', 'GraphQL', 'Kubernetes', 'Docker', 'Redis', 'Kafka', 'closure',
+      'event loop', 'asynchronous', 'promise', 'memory leak', 'garbage collection'
+    ];
+    const keytermQuery = techKeyterms.map(t => 'keyterm=' + encodeURIComponent(t)).join('&');
+
+    const url = `wss://api.deepgram.com/v1/listen?model=nova-3&language=en&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&sample_rate=${sampleRate}&encoding=linear16&channels=1&${keytermQuery}`;
 
     try {
       this.ws = new WebSocket(url, {
@@ -56,7 +68,7 @@ class DeepgramLiveService {
 
       this.ws.on('open', () => {
         this.isConnected = true;
-        console.log("[Deepgram] Connected to Nova-2 streaming WebSocket (<200ms latency)");
+        console.log("[Deepgram] Connected to Nova-3 technical speech model with keyterm boosting (<200ms latency)");
 
         // Keep-Alive Ping every 6 seconds to prevent connection drops during silence
         if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
