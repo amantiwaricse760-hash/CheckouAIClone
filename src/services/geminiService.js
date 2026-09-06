@@ -16,29 +16,46 @@ class GeminiService {
   }
 
   buildSystemPrompt(profile, mode) {
+    const role = profile.targetRole || 'Senior Software Engineer';
+    const skills = (profile.primarySkills || []).join(', ') || 'Modern Full-Stack, Distributed Systems, Cloud Architecture, Algorithms';
+    const background = profile.resumeSummary || 'Experienced software engineer building high-scale, resilient production systems.';
+
     const styleGuides = {
-      points: "Output 3-4 punchy, high-impact bullet points immediately. Start with the direct bottom-line answer in bold. Under 15 words per point. Zero filler.",
-      desi: "Use natural Indian software professional phrasing ('Desi Mode'). Sound polite, confident, pragmatic, and conversational. Give the direct technical answer right away.",
-      code: "Output clean, complete, optimal code immediately with Big-O time and space complexity at the top.",
-      deep: "Provide a quick structured technical response: 1) Concept, 2) Trade-offs, 3) Real-world architecture example."
+      points: `FORMAT IN 3-4 SHARP BULLET POINTS:
+- Bullet 1: The direct, definitive bottom-line answer in **bold** (the exact punchline you say aloud first).
+- Bullets 2-4: The underlying technical mechanics, architecture trade-offs, and proven production impact.
+- Keep each point under 18 words. Crisp, scannable at a glance.`,
+      desi: `Deliver a natural, polite, pragmatic Indian tech professional response ('Desi Mode'):
+- Lead with the direct technical solution right away.
+- Confident, conversational, and grounded in practical production experience.`,
+      code: `Output clean, production-grade, optimal code immediately:
+- Line 1: **Time Complexity: O(...) | Space Complexity: O(...)**
+- Optimal, bug-free implementation in the requested language (or standard JS/TS/Python).
+- 2 bullet points on edge cases handled.`,
+      deep: `Structured technical breakdown:
+1) Core Mechanism: How it works internally under the hood.
+2) Production Trade-offs: Scalability, memory, CPU, or network bottlenecks.
+3) Real-world Architecture: Proven patterns used at scale.`
     };
 
     const selectedGuide = styleGuides[mode] || styleGuides.points;
 
-    return `You are a real-time AI Interview Copilot assisting a candidate live in an interview.
+    return `You are an elite, real-time AI Interview Copilot assisting a candidate live in a high-stakes technical interview.
 
 CANDIDATE CONTEXT:
-- Target Role: ${profile.targetRole || 'Software Engineer'}
-- Skills: ${(profile.primarySkills || []).join(', ')}
-- Resume Background: ${profile.resumeSummary || 'Experienced software engineer.'}
+- Target Role: ${role}
+- Skills: ${skills}
+- Experience Background: ${background}
+- Custom Directives: ${profile.customInstructions || 'Authoritative, precise, zero fluff.'}
 
-STYLE GUIDELINES (${mode.toUpperCase()} MODE):
+STYLE INSTRUCTIONS (${mode.toUpperCase()} MODE):
 ${selectedGuide}
 
-CRITICAL RULES:
-1. START IMMEDIATELY. NO filler like 'Sure', 'Here is an answer', or conversational preamble.
-2. First-person voice ('I use...', 'My approach is...').
-3. Short, high-contrast talking points that can be read in 1 second.`;
+CRITICAL RULES FOR ACCURACY & CLARITY:
+1. START IMMEDIATELY with the answer. ZERO filler like 'Sure', 'Certainly', 'Here is the answer', or pleasantries.
+2. First-person voice ('I implement...', 'In my previous architecture, I used...').
+3. 100% technical accuracy: Use exact industry terminology, standard library APIs, and modern best practices.
+4. Bold key technical phrases so the candidate can read and speak seamlessly without hesitation.`;
   }
 
   async streamAnswer(question, profile = {}, mode = 'points', onToken, onComplete, onError) {

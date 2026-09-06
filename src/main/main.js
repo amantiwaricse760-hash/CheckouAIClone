@@ -223,7 +223,10 @@ ipcMain.on('start-native-audio', (event, { source, mode }) => {
           }
         },
         onSentenceComplete: async (question) => {
-          console.log(`[Deepgram] Live sentence: "${question}". Answering via Gemini...`);
+          console.log(`[Copilot Auto-Answer] Question captured: "${question}". Generating answer...`);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('ai-transcribed', { question });
+          }
           const profile = loadProfile();
           if (companionServer) {
             companionServer.broadcast({ type: 'QUESTION', data: question });

@@ -129,6 +129,13 @@ async function init() {
   }
 
   setupEventListeners();
+
+  // Auto-start listening on launch so candidate never has to click any buttons
+  if (window.copilotAPI) {
+    setTimeout(() => {
+      startAudioCapture();
+    }, 400);
+  }
 }
 
 let browserSocket = null;

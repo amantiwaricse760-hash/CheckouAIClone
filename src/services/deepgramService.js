@@ -1,7 +1,6 @@
 /**
  * Ultra-Low Latency Streaming Speech-to-Text via Deepgram Nova-2
- * Uses native WebSockets (already installed: ws)
- * Latency: < 200ms
+ * Industry Standard Live Auto-Triggering Engine
  */
 
 const { WebSocket } = require('ws');
@@ -11,19 +10,42 @@ class DeepgramLiveService {
     this.apiKey = apiKey || process.env.DEEPGRAM_API_KEY || "";
     this.ws = null;
     this.isConnected = false;
+    this.isStreaming = false;
+    this.keepAliveTimer = null;
+    this.reconnectTimer = null;
+    this.streamConfig = null;
+
+    this.fullTranscript = "";
+    this.sentenceTimeout = null;
+    this.lastTriggeredText = "";
+    this.lastTriggerTime = 0;
   }
 
   setApiKey(key) {
     this.apiKey = key;
   }
 
-  startStreaming({ sampleRate = 16000, onTranscript, onSentenceComplete, onError }) {
+  startStreaming(config = {}) {
+    this.streamConfig = config;
+    this.isStreaming = true;
+
     if (!this.apiKey) {
-      if (onError) onError(new Error("Deepgram API Key missing. Add it in Settings or .env for <200ms instant transcription."));
+      if (config.onError) {
+        config.onError(new Error("Deepgram API Key missing. Please check .env or Settings."));
+      }
       return;
     }
 
-    const url = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&endpointing=300&sample_rate=${sampleRate}&encoding=linear16&channels=1`;
+    this._connect();
+  }
+
+  _connect() {
+    if (this.ws) {
+      this._cleanupWs();
+    }
+
+    const sampleRate = this.streamConfig?.sampleRate || 16000;
+    const url = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&sample_rate=${sampleRate}&encoding=linear16&channels=1`;
 
     try {
       this.ws = new WebSocket(url, {
@@ -32,48 +54,84 @@ class DeepgramLiveService {
         }
       });
 
-      let fullTranscript = "";
-      let sentenceTimeout = null;
-
-      const triggerQuestion = () => {
-        if (fullTranscript.trim().length > 5) {
-          const q = fullTranscript.trim();
-          console.log(`[Deepgram] Rapid auto-trigger: "${q}"`);
-          fullTranscript = "";
-          if (sentenceTimeout) clearTimeout(sentenceTimeout);
-          sentenceTimeout = null;
-          if (onSentenceComplete) onSentenceComplete(q);
-        }
-      };
-
       this.ws.on('open', () => {
         this.isConnected = true;
-        console.log("[Deepgram] Connected to Nova-2 streaming STT (<200ms latency)");
+        console.log("[Deepgram] Connected to Nova-2 streaming WebSocket (<200ms latency)");
+
+        // Keep-Alive Ping every 6 seconds to prevent connection drops during silence
+        if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
+        this.keepAliveTimer = setInterval(() => {
+          if (this.ws && this.isConnected && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ type: 'KeepAlive' }));
+          }
+        }, 6000);
       });
+
+      const triggerQuestion = (reason = 'auto') => {
+        const text = this.fullTranscript.trim();
+        if (this.sentenceTimeout) {
+          clearTimeout(this.sentenceTimeout);
+          this.sentenceTimeout = null;
+        }
+
+        // Must be meaningful text (at least 8 chars or 2 words)
+        const wordCount = text.split(/\s+/).length;
+        if (text.length >= 8 && wordCount >= 2) {
+          // Prevent double-triggering identical phrase within 2.5 seconds
+          const now = Date.now();
+          if (text === this.lastTriggeredText && now - this.lastTriggerTime < 2500) {
+            return;
+          }
+
+          console.log(`[Deepgram Auto-Trigger (${reason})]: "${text}"`);
+          this.lastTriggeredText = text;
+          this.lastTriggerTime = now;
+          this.fullTranscript = "";
+
+          if (this.streamConfig?.onSentenceComplete) {
+            this.streamConfig.onSentenceComplete(text);
+          }
+        }
+      };
 
       this.ws.on('message', (data) => {
         try {
           const response = JSON.parse(data.toString());
+
+          // Deepgram UtteranceEnd event (speaker finished talking)
+          if (response.type === 'UtteranceEnd') {
+            triggerQuestion('UtteranceEnd');
+            return;
+          }
+
           const alt = response?.channel?.alternatives?.[0];
           const transcript = (alt?.transcript || "").trim();
 
           if (transcript) {
             if (response.is_final) {
-              fullTranscript += (fullTranscript ? " " : "") + transcript;
-              if (onTranscript) onTranscript(fullTranscript, true);
+              this.fullTranscript += (this.fullTranscript ? " " : "") + transcript;
+              if (this.streamConfig?.onTranscript) {
+                this.streamConfig.onTranscript(this.fullTranscript, true);
+              }
 
-              // 400ms silence debounce: rapid AI trigger
-              if (sentenceTimeout) clearTimeout(sentenceTimeout);
-              sentenceTimeout = setTimeout(triggerQuestion, 400);
+              // Rapid smart debounce:
+              // If sentence ends with '?' (a question), trigger after 250ms
+              // If general speech, trigger after 400ms of silence
+              if (this.sentenceTimeout) clearTimeout(this.sentenceTimeout);
+              const delay = /[?!.]$/.test(transcript) ? 250 : 400;
+              this.sentenceTimeout = setTimeout(() => triggerQuestion('silence-debounce'), delay);
             } else {
-              const preview = fullTranscript + (fullTranscript ? " " : "") + transcript;
-              if (onTranscript) onTranscript(preview, false);
+              // Interim live preview for immediate UI feedback
+              const preview = this.fullTranscript + (this.fullTranscript ? " " : "") + transcript;
+              if (this.streamConfig?.onTranscript) {
+                this.streamConfig.onTranscript(preview, false);
+              }
             }
           }
 
-          // Trigger immediately whenever Deepgram detects end-of-speech (even on empty endpoint frame)
+          // Deepgram server-side speech endpointing
           if (response.speech_final) {
-            triggerQuestion();
+            triggerQuestion('speech_final');
           }
         } catch (e) {
           console.error("[Deepgram] Parse error:", e);
@@ -81,16 +139,27 @@ class DeepgramLiveService {
       });
 
       this.ws.on('error', (err) => {
-        console.error("[Deepgram] WebSocket error:", err);
-        if (onError) onError(err);
+        console.error("[Deepgram] WebSocket error:", err.message);
+        if (this.streamConfig?.onError) this.streamConfig.onError(err);
       });
 
-      this.ws.on('close', () => {
+      this.ws.on('close', (code, reason) => {
         this.isConnected = false;
-        console.log("[Deepgram] Stream closed");
+        if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
+        this.keepAliveTimer = null;
+        console.log(`[Deepgram] Connection closed (${code}). Auto-reconnect: ${this.isStreaming}`);
+
+        // Auto-reconnect if we are supposed to be active
+        if (this.isStreaming) {
+          if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = setTimeout(() => {
+            console.log("[Deepgram] Auto-reconnecting to streaming STT...");
+            this._connect();
+          }, 800);
+        }
       });
     } catch (e) {
-      if (onError) onError(e);
+      if (this.streamConfig?.onError) this.streamConfig.onError(e);
     }
   }
 
@@ -100,16 +169,35 @@ class DeepgramLiveService {
     }
   }
 
-  stop() {
-    if (this.ws) {
-      if (this.isConnected && this.ws.readyState === WebSocket.OPEN) {
-        // Send empty JSON to tell Deepgram stream is finished
-        this.ws.send(JSON.stringify({ type: 'CloseStream' }));
-      }
-      this.ws.close();
-      this.ws = null;
-      this.isConnected = false;
+  _cleanupWs() {
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
     }
+    if (this.sentenceTimeout) {
+      clearTimeout(this.sentenceTimeout);
+      this.sentenceTimeout = null;
+    }
+    if (this.ws) {
+      try {
+        if (this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'CloseStream' }));
+        }
+        this.ws.close();
+      } catch (e) {}
+      this.ws = null;
+    }
+    this.isConnected = false;
+  }
+
+  stop() {
+    this.isStreaming = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this._cleanupWs();
+    this.fullTranscript = "";
   }
 }
 
