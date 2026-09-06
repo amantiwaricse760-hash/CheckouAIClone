@@ -77,10 +77,8 @@ async function init() {
     if (data.geminiApiKey) inputApiKey.value = data.geminiApiKey;
     if (data.deepgramApiKey) inputDeepgramKey.value = data.deepgramApiKey;
 
-    if (!data.hasApiKey) {
-      settingsModal.style.display = 'flex';
-      setStatus('ready', '⚠️ Please enter Gemini API key in Settings');
-    }
+    // Never pop up settings modal automatically (embedded default keys are active)
+    settingsModal.style.display = 'none';
 
     // IPC Listeners
     window.copilotAPI.onAiToken(({ chunk, fullText }) => {
@@ -292,6 +290,9 @@ async function startBrowserAudioCapture() {
 function setupPcmStreamer(stream) {
   try {
     pcmContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    if (pcmContext.state === 'suspended') {
+      pcmContext.resume().catch(() => {});
+    }
     const pcmSource = pcmContext.createMediaStreamSource(stream);
     pcmProcessor = pcmContext.createScriptProcessor(2048, 1, 1);
 
@@ -304,7 +305,8 @@ function setupPcmStreamer(stream) {
         pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
       }
       if (window.copilotAPI && window.copilotAPI.sendAudioChunk) {
-        window.copilotAPI.sendAudioChunk(pcm16.buffer, currentAudioSource === 'monitor' ? 'monitor' : 'mic');
+        const sourceTag = currentAudioSource === 'monitor' ? 'monitor' : 'both';
+        window.copilotAPI.sendAudioChunk(pcm16.buffer, sourceTag);
       }
     };
 
@@ -343,6 +345,9 @@ function stopBrowserAudioCapture() {
 function setupAudioVisualizer(stream) {
   try {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch(() => {});
+    }
     const source = audioContext.createMediaStreamSource(stream);
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 64;
@@ -689,6 +694,12 @@ function setupEventListeners() {
 
     settingsModal.style.display = 'none';
   });
+
+  // Ensure AudioContexts resume on any user gesture
+  document.addEventListener('pointerdown', () => {
+    if (pcmContext && pcmContext.state === 'suspended') pcmContext.resume().catch(() => {});
+    if (audioContext && audioContext.state === 'suspended') audioContext.resume().catch(() => {});
+  }, { passive: true });
 }
 
 init();

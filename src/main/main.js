@@ -10,7 +10,12 @@ const DeepgramLiveService = require('../services/deepgramService');
 const ScreenCaptureService = require('../services/screenCaptureService');
 const InterviewConversationAnalyzer = require('../services/conversationAnalyzer');
 
+// Embedded default API keys (Ensures .exe works out-of-the-box on Windows without asking user)
+const DEFAULT_GEMINI_KEY = Buffer.from('QVEuQWI4Uk42S3VvLVNWa1dEMkJTeHdFejJnT3dadkVpMFk3TjFaOGNUdlB4b1BRdU5XMVE=', 'base64').toString('utf-8');
+const DEFAULT_DEEPGRAM_KEY = Buffer.from('Yzk0ZGFjZDc2MWJjZWI1MDNlMDkyN2EzNzU4ODVlODhmZmE2MGJiNg==', 'base64').toString('utf-8');
+
 let mainWindow = null;
+let hiddenOwnerWindow = null;
 let snipWindow = null;
 let isGhostMode = false;
 let geminiService = null;
@@ -82,7 +87,18 @@ function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
 
+  // Stealth Win32 technique: create invisible owner window to guarantee taskbar exclusion on Windows
+  if (process.platform === 'win32' && (!hiddenOwnerWindow || hiddenOwnerWindow.isDestroyed())) {
+    hiddenOwnerWindow = new BrowserWindow({
+      show: false,
+      width: 0,
+      height: 0,
+      skipTaskbar: true
+    });
+  }
+
   mainWindow = new BrowserWindow({
+    ...(hiddenOwnerWindow ? { parent: hiddenOwnerWindow } : {}),
     width: 480,
     height: 640,
     x: width - 500, // Top right corner
@@ -103,14 +119,34 @@ function createWindow() {
     }
   });
 
-  // CRITICAL STEALTH FEATURE: Invisibility from screen share recorders
-  // Reinforce on creation, ready-to-show, and show to guarantee Windows DWM exclusion
+  try {
+    mainWindow.setSkipTaskbar(true);
+  } catch (e) {}
+
+  // CRITICAL STEALTH FEATURE: Clean Screen Share Invisibility
+  // Note: Electron's built-in setContentProtection(true) forces Windows to draw a SOLID BLACK BOX (WDA_MONITOR = 1).
+  // To eliminate the black box on Google Meet / Zoom screen share, we use WDA_EXCLUDEFROMCAPTURE (0x11 = 17) on Win10/11,
+  // which captures whatever is behind the window with ZERO black box.
   const applyStealthProtection = () => {
     try {
-      mainWindow.setContentProtection(true);
-      console.log("[Stealth] Content protection reinforced (Window excluded from screen captures)");
+      mainWindow.setSkipTaskbar(true);
+      if (process.platform === 'win32') {
+        const handle = mainWindow.getNativeWindowHandle();
+        const hwnd = handle.length >= 8 ? handle.readBigInt64LE().toString() : handle.readInt32LE().toString();
+        const { spawn } = require('child_process');
+        const ps = spawn('powershell.exe', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-WindowStyle',
+          'Hidden',
+          '-Command',
+          `$sig='[DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr h, uint a);'; Add-Type -MemberDefinition $sig -Name W32 -Namespace Win; [Win.W32]::SetWindowDisplayAffinity([IntPtr]${hwnd}, 17);`
+        ], { windowsHide: true, stdio: 'ignore' });
+        ps.unref();
+      }
+      console.log("[Stealth] Clean screen share affinity & taskbar exclusion applied (zero black box)");
     } catch (e) {
-      console.warn("[Stealth] setContentProtection not supported on this compositor:", e);
+      console.warn("[Stealth] Error applying window affinity:", e);
     }
   };
 
@@ -160,6 +196,10 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    if (hiddenOwnerWindow && !hiddenOwnerWindow.isDestroyed()) {
+      hiddenOwnerWindow.close();
+      hiddenOwnerWindow = null;
+    }
   });
 }
 
@@ -172,8 +212,8 @@ app.whenReady().then(() => {
   // Initialize AI Service
   const initialProfile = loadProfile();
   const savedConfig = loadConfig();
-  const apiKey = process.env.GEMINI_API_KEY || savedConfig.geminiApiKey || "";
-  const deepgramKey = process.env.DEEPGRAM_API_KEY || savedConfig.deepgramApiKey || "";
+  const apiKey = process.env.GEMINI_API_KEY || savedConfig.geminiApiKey || DEFAULT_GEMINI_KEY;
+  const deepgramKey = process.env.DEEPGRAM_API_KEY || savedConfig.deepgramApiKey || DEFAULT_DEEPGRAM_KEY;
 
   geminiService = new GeminiService(apiKey);
   conversationAnalyzer = new InterviewConversationAnalyzer(apiKey);
@@ -281,7 +321,7 @@ ipcMain.on('start-native-audio', (event, { source, mode }) => {
           console.log(`[Auto-Trigger]: Raw transcript captured: "${rawText}" (Speaker: ${speaker})`);
 
           if (!conversationAnalyzer) {
-            conversationAnalyzer = new InterviewConversationAnalyzer(process.env.GEMINI_API_KEY || "");
+            conversationAnalyzer = new InterviewConversationAnalyzer(geminiService?.apiKey || DEFAULT_GEMINI_KEY);
           }
 
           const analysis = await conversationAnalyzer.analyze(rawText, speaker);
@@ -342,11 +382,12 @@ ipcMain.on('stop-native-audio', () => {
 ipcMain.on('set-native-audio-source', (event, source) => {
   if (nativeAudio) nativeAudio.setSource(source);
 });
+
 ipcMain.on('incoming-browser-audio-chunk', (event, { chunk, source }) => {
   if (deepgramService && deepgramService.isConnected) {
     try {
-      const buffer = Buffer.from(chunk);
-      deepgramService.sendAudioChunk(buffer, source || 'mic');
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      deepgramService.sendAudioChunk(buffer, source || 'both');
     } catch (e) {
       console.error('[BrowserAudioChunk Error]:', e.message);
     }
@@ -355,8 +396,8 @@ ipcMain.on('incoming-browser-audio-chunk', (event, { chunk, source }) => {
 
 ipcMain.handle('get-initial-data', () => {
   const savedConfig = loadConfig();
-  const currentGeminiKey = (geminiService && geminiService.apiKey) || savedConfig.geminiApiKey || process.env.GEMINI_API_KEY || "";
-  const currentDeepgramKey = (deepgramService && deepgramService.apiKey) || savedConfig.deepgramApiKey || process.env.DEEPGRAM_API_KEY || "";
+  const currentGeminiKey = (geminiService && geminiService.apiKey) || savedConfig.geminiApiKey || process.env.GEMINI_API_KEY || DEFAULT_GEMINI_KEY;
+  const currentDeepgramKey = (deepgramService && deepgramService.apiKey) || savedConfig.deepgramApiKey || process.env.DEEPGRAM_API_KEY || DEFAULT_DEEPGRAM_KEY;
 
   return {
     profile: loadProfile(),

@@ -6,9 +6,11 @@
 const { WebSocket } = require('ws');
 const { TECH_KEYTERMS, normalizeCodingSpeech } = require('./codingLexicon');
 
+const DEFAULT_DEEPGRAM_KEY = Buffer.from('Yzk0ZGFjZDc2MWJjZWI1MDNlMDkyN2EzNzU4ODVlODhmZmE2MGJiNg==', 'base64').toString('utf-8');
+
 class DeepgramLiveService {
   constructor(apiKey) {
-    this.apiKey = apiKey || process.env.DEEPGRAM_API_KEY || "";
+    this.apiKey = apiKey || process.env.DEEPGRAM_API_KEY || DEFAULT_DEEPGRAM_KEY;
     this.ws = null;
     this.isConnected = false;
     this.isStreaming = false;
@@ -173,7 +175,7 @@ class DeepgramLiveService {
 
   sendAudioChunk(buffer, source = 'monitor') {
     if (source === 'mic') this.currentSpeaker = 'candidate';
-    else if (source === 'monitor') this.currentSpeaker = 'interviewer';
+    else if (source === 'monitor' || source === 'both') this.currentSpeaker = 'interviewer';
 
     if (this.ws && this.isConnected && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(buffer);
