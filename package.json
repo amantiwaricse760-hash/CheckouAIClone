@@ -29,9 +29,9 @@
     ],
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        "AppImage"
       ],
+      "maintainer": "Akash <akash@checkou.ai>",
       "category": "Utility"
     },
     "win": {
@@ -61,7 +61,7 @@
     }
   },
   "keywords": ["interview", "ai", "copilot", "electron", "stealth"],
-  "author": "Akash",
+  "author": "Akash <akash@checkou.ai>",
   "license": "ISC",
   "dependencies": {
     "@google/generative-ai": "^0.24.0",
