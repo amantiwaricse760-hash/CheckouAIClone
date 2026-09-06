@@ -22,6 +22,8 @@ class NativeAudioService extends EventEmitter {
     this.silenceThreshold = 550;
     this.silenceCheckInterval = null;
 
+    this.lockedSource = null;
+    this.lockExpiry = 0;
     this.monQueue = [];
     this.micQueue = [];
   }
@@ -80,7 +82,9 @@ class NativeAudioService extends EventEmitter {
     this.ensureOptimalVolume();
     this.isRecording = true;
     this.isSpeaking = false;
-    this.lastActiveSource = 'mic';
+    this.lockedSource = null;
+    this.lockExpiry = 0;
+    this.lastActiveSource = 'monitor';
 
     console.log(`[NativeAudio] Clean stream active: "${this.currentSource}" | Mic: ${this.devices.mic} | Meet: ${this.devices.monitor}`);
 
@@ -159,12 +163,27 @@ class NativeAudioService extends EventEmitter {
     }
 
     // Dual 'both' mode:
-    // Seamless direct routing: Whichever stream has active voice or recent voice is emitted directly
-    if (level > 6) {
-      this.lastActiveSource = source;
+    // Priority: Google Meet (monitor). If someone in Google Meet speaks, lock to monitor immediately.
+    // Mic is only routed when Google Meet is completely silent.
+    const now = Date.now();
+
+    if (source === 'monitor' && level >= 7) {
+      this.lockedSource = 'monitor';
+      this.lockExpiry = now + 700; // Hold lock for 700ms after last monitor sound
+    } else if (source === 'mic' && level >= 12) {
+      // Only lock to mic if Google Meet is not active
+      if (!this.lockedSource || now > this.lockExpiry || this.lockedSource === 'mic') {
+        this.lockedSource = 'mic';
+        this.lockExpiry = now + 500; // Hold lock for 500ms after last mic sound
+      }
     }
 
-    if (source === this.lastActiveSource) {
+    if (now > this.lockExpiry) {
+      this.lockedSource = null;
+    }
+
+    // Only emit chunk if this source currently holds the lock
+    if (this.lockedSource === source) {
       this.emit('chunk', data, source);
       this.emit('level', level);
       this.checkVoiceActivity(level);
@@ -185,6 +204,8 @@ class NativeAudioService extends EventEmitter {
   stop() {
     this.isRecording = false;
     this.isSpeaking = false;
+    this.lockedSource = null;
+    this.lockExpiry = 0;
     if (this.silenceCheckInterval) {
       clearInterval(this.silenceCheckInterval);
       this.silenceCheckInterval = null;
