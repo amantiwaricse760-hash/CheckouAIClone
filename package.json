@@ -5,6 +5,8 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
+    "web": "node src/server.js",
+    "server": "node src/server.js",
     "dev": "electron ."
   },
   "keywords": ["interview", "ai", "copilot", "electron", "stealth"],

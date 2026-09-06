@@ -92,10 +92,48 @@ async function init() {
         clearUI();
       }
     });
+  } else {
+    // Browser Localhost Fallback: Connect directly via WebSocket
+    setupBrowserSocket();
   }
 
   setupSpeechRecognition();
   setupEventListeners();
+}
+
+let browserSocket = null;
+function setupBrowserSocket() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}`;
+  browserSocket = new WebSocket(wsUrl);
+
+  browserSocket.onopen = () => {
+    setStatus('ready', 'Connected (Web)');
+  };
+
+  browserSocket.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'SYNC_STATE') {
+        if (msg.data.question) questionInput.value = msg.data.question;
+        if (msg.data.answer) renderMarkdown(msg.data.answer);
+      } else if (msg.type === 'TOKEN') {
+        setStatus('generating', 'Answering...');
+        renderMarkdown(msg.fullText);
+      } else if (msg.type === 'STATUS') {
+        setStatus(msg.data === 'generating' ? 'generating' : 'ready', msg.data === 'generating' ? 'Answering...' : 'Ready');
+      } else if (msg.type === 'CLEAR') {
+        clearUI();
+      } else if (msg.type === 'ERROR') {
+        setStatus('error', 'Error');
+        answerDisplay.innerHTML = `<div style="color: #ef4444; padding: 10px;">⚠️ ${msg.data}</div>`;
+      }
+    } catch (e) {}
+  };
+
+  browserSocket.onclose = () => {
+    setTimeout(setupBrowserSocket, 2000);
+  };
 }
 
 function setStatus(state, label) {
@@ -199,6 +237,12 @@ function triggerAsk(question) {
       question: question.trim(),
       mode: currentMode
     });
+  } else if (browserSocket && browserSocket.readyState === WebSocket.OPEN) {
+    browserSocket.send(JSON.stringify({
+      action: 'ask',
+      question: question.trim(),
+      mode: currentMode
+    }));
   }
 }
 
@@ -217,6 +261,9 @@ function clearUI() {
   questionInput.value = '';
   answerDisplay.innerHTML = '<div class="placeholder-text">When the interviewer speaks, bullet-point answers and code snippets will stream here instantly.</div>';
   setStatus('ready', 'Ready');
+  if (browserSocket && browserSocket.readyState === WebSocket.OPEN) {
+    browserSocket.send(JSON.stringify({ action: 'clear' }));
+  }
 }
 
 function setupEventListeners() {
