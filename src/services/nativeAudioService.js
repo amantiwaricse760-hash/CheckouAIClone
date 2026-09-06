@@ -80,8 +80,17 @@ class NativeAudioService extends EventEmitter {
     return out;
   }
 
+  ensureOptimalVolume() {
+    try {
+      if (this.devices.mic && this.devices.mic !== 'default') {
+        execSync(`pactl set-source-volume ${this.devices.mic} 85%`, { stdio: 'ignore' });
+      }
+    } catch (e) {}
+  }
+
   start() {
     if (this.isRecording) return;
+    this.ensureOptimalVolume();
     this.isRecording = true;
     this.isSpeaking = false;
     this.monQueue = [];

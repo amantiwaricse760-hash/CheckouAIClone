@@ -4,6 +4,7 @@
  */
 
 const { WebSocket } = require('ws');
+const { TECH_KEYTERMS, normalizeCodingSpeech } = require('./codingLexicon');
 
 class DeepgramLiveService {
   constructor(apiKey) {
@@ -45,18 +46,7 @@ class DeepgramLiveService {
     }
 
     const sampleRate = this.streamConfig?.sampleRate || 16000;
-    
-    // Boost software engineering & technical interview terminology
-    const techKeyterms = [
-      'binary search', 'algorithm', 'data structures', 'time complexity', 'space complexity',
-      'Big O', 'recursion', 'dynamic programming', 'linked list', 'hash map', 'binary tree',
-      'graph', 'depth first search', 'breadth first search', 'microservices', 'database',
-      'SQL', 'indexing', 'polymorphism', 'inheritance', 'React', 'Node.js', 'TypeScript',
-      'Python', 'REST API', 'GraphQL', 'Kubernetes', 'Docker', 'Redis', 'Kafka', 'closure',
-      'event loop', 'asynchronous', 'promise', 'memory leak', 'garbage collection'
-    ];
-    const keytermQuery = techKeyterms.map(t => 'keyterm=' + encodeURIComponent(t)).join('&');
-
+    const keytermQuery = TECH_KEYTERMS.map(t => 'keyterm=' + encodeURIComponent(t)).join('&');
     const url = `wss://api.deepgram.com/v1/listen?model=nova-3&language=en&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&sample_rate=${sampleRate}&encoding=linear16&channels=1&${keytermQuery}`;
 
     try {
@@ -68,7 +58,7 @@ class DeepgramLiveService {
 
       this.ws.on('open', () => {
         this.isConnected = true;
-        console.log("[Deepgram] Connected to Nova-3 technical speech model with keyterm boosting (<200ms latency)");
+        console.log("[Deepgram] Connected to Nova-3 with Coding Lexicon boosting (<200ms latency)");
 
         // Keep-Alive Ping every 6 seconds to prevent connection drops during silence
         if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
@@ -80,7 +70,9 @@ class DeepgramLiveService {
       });
 
       const triggerQuestion = (reason = 'auto') => {
-        const text = this.fullTranscript.trim();
+        const rawText = this.fullTranscript.trim();
+        const text = normalizeCodingSpeech(rawText);
+
         if (this.sentenceTimeout) {
           clearTimeout(this.sentenceTimeout);
           this.sentenceTimeout = null;
@@ -122,8 +114,9 @@ class DeepgramLiveService {
           if (transcript) {
             if (response.is_final) {
               this.fullTranscript += (this.fullTranscript ? " " : "") + transcript;
+              const displayTranscript = normalizeCodingSpeech(this.fullTranscript);
               if (this.streamConfig?.onTranscript) {
-                this.streamConfig.onTranscript(this.fullTranscript, true);
+                this.streamConfig.onTranscript(displayTranscript, true);
               }
 
               // Rapid smart debounce:
@@ -135,8 +128,9 @@ class DeepgramLiveService {
             } else {
               // Interim live preview for immediate UI feedback
               const preview = this.fullTranscript + (this.fullTranscript ? " " : "") + transcript;
+              const displayPreview = normalizeCodingSpeech(preview);
               if (this.streamConfig?.onTranscript) {
-                this.streamConfig.onTranscript(preview, false);
+                this.streamConfig.onTranscript(displayPreview, false);
               }
             }
           }
