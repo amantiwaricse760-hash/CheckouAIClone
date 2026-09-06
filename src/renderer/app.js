@@ -83,6 +83,11 @@ async function init() {
       renderMarkdown(fullText);
     });
 
+    window.copilotAPI.onAiTranscribed(({ question }) => {
+      questionInput.value = question;
+      currentQuestion = question;
+    });
+
     window.copilotAPI.onAiError(({ error }) => {
       setStatus('error', 'Error');
       answerDisplay.innerHTML = `<div style="color: #ef4444; padding: 10px;">⚠️ ${error}</div>`;
@@ -109,7 +114,6 @@ async function init() {
     setupBrowserSocket();
   }
 
-  setupSpeechRecognition();
   setupEventListeners();
 }
 
@@ -190,49 +194,154 @@ function renderMarkdown(rawText) {
   answerDisplay.scrollTop = answerDisplay.scrollHeight;
 }
 
-// Speech-to-Text Setup
-function setupSpeechRecognition() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) return;
+// Audio Capture Engine (Gemini Multimodal)
+let mediaStream = null;
+let mediaRecorder = null;
+let recordedChunks = [];
+let audioContext = null;
+let analyser = null;
+let dataArray = null;
+let animFrameId = null;
+let lastSoundTime = Date.now();
+let isSpeaking = false;
+let useSystemAudio = false;
 
-  recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.lang = 'en-US';
+async function startAudioCapture() {
+  try {
+    if (useSystemAudio) {
+      mediaStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: { echoCancellation: true, noiseSuppression: true }
+      });
+    } else {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+    }
 
-  let finalTranscript = '';
+    setupAudioVisualizer(mediaStream);
+    setupMediaRecorder(mediaStream);
+    isListening = true;
+    btnListen.classList.add('active');
+    listenText.innerText = 'Listening...';
+    setStatus('listening', 'Listening');
+  } catch (err) {
+    console.error("Audio capture error:", err);
+    setStatus('error', 'Mic access error');
+    stopAudioCapture();
+  }
+}
 
-  recognition.onresult = (event) => {
-    let interim = '';
-    for (let i = event.resultIndex; i < event.results.length; ++i) {
-      if (event.results[i].isFinal) {
-        finalTranscript += event.results[i][0].transcript + ' ';
+function stopAudioCapture() {
+  isListening = false;
+  btnListen.classList.remove('active');
+  listenText.innerText = 'Start Listening';
+  setStatus('ready', 'Ready');
+
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    try { mediaRecorder.stop(); } catch (e) {}
+  }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+  if (animFrameId) cancelAnimationFrame(animFrameId);
+  if (audioContext && audioContext.state !== 'closed') {
+    try { audioContext.close(); } catch (e) {}
+  }
+  statusPulse.style.transform = 'scale(1)';
+  statusPulse.style.boxShadow = 'none';
+}
+
+function setupAudioVisualizer(stream) {
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioContext.createMediaStreamSource(stream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 64;
+    source.connect(analyser);
+
+    const bufferLength = analyser.frequencyBinCount;
+    dataArray = new Uint8Array(bufferLength);
+
+    function checkVolume() {
+      if (!isListening) return;
+      analyser.getByteFrequencyData(dataArray);
+      let sum = 0;
+      for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
+      let avg = sum / bufferLength;
+
+      if (avg > 18) {
+        statusPulse.style.transform = `scale(${1 + Math.min(avg / 30, 0.8)})`;
+        statusPulse.style.boxShadow = `0 0 10px #22c55e`;
+        lastSoundTime = Date.now();
+        isSpeaking = true;
       } else {
-        interim += event.results[i][0].transcript;
+        statusPulse.style.transform = 'scale(1)';
+        statusPulse.style.boxShadow = 'none';
+
+        if (isSpeaking && (Date.now() - lastSoundTime > 1800)) {
+          isSpeaking = false;
+          if (mediaRecorder && mediaRecorder.state === 'recording') {
+            mediaRecorder.stop();
+          }
+        }
+      }
+      animFrameId = requestAnimationFrame(checkVolume);
+    }
+    checkVolume();
+  } catch (e) {
+    console.error("Visualizer error:", e);
+  }
+}
+
+function setupMediaRecorder(stream) {
+  let mimeType = 'audio/webm;codecs=opus';
+  if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'audio/webm';
+
+  recordedChunks = [];
+  mediaRecorder = new MediaRecorder(stream, { mimeType });
+
+  mediaRecorder.ondataavailable = (event) => {
+    if (event.data.size > 0) recordedChunks.push(event.data);
+  };
+
+  mediaRecorder.onstop = async () => {
+    if (recordedChunks.length > 0) {
+      const blob = new Blob(recordedChunks, { type: mimeType });
+      recordedChunks = [];
+      if (blob.size > 8000) {
+        await sendAudioToGemini(blob, mimeType);
       }
     }
-
-    const currentText = finalTranscript || interim;
-    questionInput.value = currentText;
-
-    // Auto trigger if final pause is detected
-    if (finalTranscript.trim().length > 10) {
-      triggerAsk(finalTranscript.trim());
-      finalTranscript = '';
+    if (isListening && mediaStream && mediaStream.active) {
+      try { mediaRecorder.start(); } catch (e) {}
     }
   };
 
-  recognition.onerror = (event) => {
-    if (event.error === 'not-allowed') {
-      setStatus('error', 'Mic blocked');
-    }
-  };
+  mediaRecorder.start();
+}
 
-  recognition.onend = () => {
-    if (isListening) {
-      recognition.start();
+async function sendAudioToGemini(blob, mimeType) {
+  setStatus('generating', 'Transcribing...');
+  answerDisplay.innerHTML = '<div class="placeholder-text">Analyzing interviewer audio & writing answer...</div>';
+
+  const reader = new FileReader();
+  reader.onloadend = () => {
+    const base64Data = reader.result.split(',')[1];
+    if (window.copilotAPI) {
+      window.copilotAPI.askAudioCopilot({
+        audioBase64: base64Data,
+        mimeType: mimeType,
+        mode: currentMode
+      });
     }
   };
+  reader.readAsDataURL(blob);
 }
 
 function triggerAsk(question, extraInstruction = '') {
@@ -310,21 +419,21 @@ function setOpacity(val) {
 function setupEventListeners() {
   // Listen Button
   btnListen.addEventListener('click', () => {
-    isListening = !isListening;
-    if (isListening) {
-      btnListen.classList.add('active');
-      listenText.innerText = 'Listening...';
-      setStatus('listening', 'Listening');
-      try {
-        if (recognition) recognition.start();
-      } catch (e) {}
+    if (!isListening) {
+      startAudioCapture();
     } else {
-      btnListen.classList.remove('active');
-      listenText.innerText = 'Start Listening';
-      setStatus('ready', 'Ready');
-      try {
-        if (recognition) recognition.stop();
-      } catch (e) {}
+      stopAudioCapture();
+    }
+  });
+
+  // Toggle Mic vs System Audio
+  btnAudioSource.addEventListener('click', () => {
+    useSystemAudio = !useSystemAudio;
+    btnAudioSource.innerText = useSystemAudio ? '🖥️ System Audio' : '🎙️ Microphone';
+    btnAudioSource.style.borderColor = useSystemAudio ? '#38bdf8' : 'rgba(255, 255, 255, 0.1)';
+    if (isListening) {
+      stopAudioCapture();
+      startAudioCapture();
     }
   });
 

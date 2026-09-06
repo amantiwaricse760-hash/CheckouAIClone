@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
@@ -104,6 +104,11 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(true);
+  });
+  session.defaultSession.setPermissionCheckHandler(() => true);
+
   // Initialize AI Service
   const initialProfile = loadProfile();
   const apiKey = process.env.GEMINI_API_KEY || "";
@@ -186,6 +191,50 @@ ipcMain.on('ask-copilot', async (event, { question, mode }) => {
     question,
     profile,
     mode || 'points',
+    (chunk, fullText) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ai-token', { chunk, fullText });
+      }
+      if (companionServer) {
+        companionServer.broadcast({ type: 'TOKEN', chunk, fullText });
+      }
+    },
+    (fullText) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ai-complete', { fullText });
+      }
+      if (companionServer) {
+        companionServer.broadcast({ type: 'STATUS', data: 'idle' });
+      }
+    },
+    (error) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ai-error', { error: error.message });
+      }
+    }
+  );
+});
+
+ipcMain.on('ask-audio-copilot', async (event, { audioBase64, mimeType, mode }) => {
+  const profile = loadProfile();
+
+  if (companionServer) {
+    companionServer.broadcast({ type: 'STATUS', data: 'generating' });
+  }
+
+  await geminiService.streamAudioAnswer(
+    audioBase64,
+    mimeType,
+    profile,
+    mode || 'points',
+    (question) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ai-transcribed', { question });
+      }
+      if (companionServer) {
+        companionServer.broadcast({ type: 'QUESTION', data: question });
+      }
+    },
     (chunk, fullText) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('ai-token', { chunk, fullText });
