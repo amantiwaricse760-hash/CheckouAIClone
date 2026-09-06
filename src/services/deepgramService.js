@@ -33,6 +33,18 @@ class DeepgramLiveService {
       });
 
       let fullTranscript = "";
+      let sentenceTimeout = null;
+
+      const triggerQuestion = () => {
+        if (fullTranscript.trim().length > 5) {
+          const q = fullTranscript.trim();
+          console.log(`[Deepgram] Rapid auto-trigger: "${q}"`);
+          fullTranscript = "";
+          if (sentenceTimeout) clearTimeout(sentenceTimeout);
+          sentenceTimeout = null;
+          if (onSentenceComplete) onSentenceComplete(q);
+        }
+      };
 
       this.ws.on('open', () => {
         this.isConnected = true;
@@ -43,25 +55,25 @@ class DeepgramLiveService {
         try {
           const response = JSON.parse(data.toString());
           const alt = response?.channel?.alternatives?.[0];
-          const transcript = alt?.transcript || "";
+          const transcript = (alt?.transcript || "").trim();
 
           if (transcript) {
             if (response.is_final) {
               fullTranscript += (fullTranscript ? " " : "") + transcript;
               if (onTranscript) onTranscript(fullTranscript, true);
+
+              // 400ms silence debounce: rapid AI trigger
+              if (sentenceTimeout) clearTimeout(sentenceTimeout);
+              sentenceTimeout = setTimeout(triggerQuestion, 400);
             } else {
               const preview = fullTranscript + (fullTranscript ? " " : "") + transcript;
               if (onTranscript) onTranscript(preview, false);
             }
+          }
 
-            // Detect end of question
-            if (response.speech_final && fullTranscript.trim().length > 3) {
-              const finalQuestion = fullTranscript.trim();
-              fullTranscript = "";
-              if (onSentenceComplete) {
-                onSentenceComplete(finalQuestion);
-              }
-            }
+          // Trigger immediately whenever Deepgram detects end-of-speech (even on empty endpoint frame)
+          if (response.speech_final) {
+            triggerQuestion();
           }
         } catch (e) {
           console.error("[Deepgram] Parse error:", e);

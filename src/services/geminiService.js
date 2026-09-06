@@ -6,8 +6,9 @@
 class GeminiService {
   constructor(apiKey) {
     this.apiKey = apiKey || process.env.GEMINI_API_KEY;
-    this.modelName = 'gemini-2.0-flash';
-    this.fallbackModel = 'gemini-flash-latest';
+    this.modelName = 'gemini-flash-lite-latest';
+    this.fallbackModel = 'gemini-3.5-flash-lite';
+    this.activeController = null;
   }
 
   setApiKey(key) {
@@ -46,6 +47,15 @@ CRITICAL RULES:
       return;
     }
 
+    // Cancel any previous ongoing stream so new question starts immediately
+    if (this.activeController) {
+      try {
+        this.activeController.abort();
+      } catch (e) {}
+    }
+    this.activeController = new AbortController();
+    const { signal } = this.activeController;
+
     const systemPrompt = this.buildSystemPrompt(profile, mode);
 
     try {
@@ -59,8 +69,8 @@ CRITICAL RULES:
           }
         ],
         generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 2048
+          temperature: 0.2,
+          maxOutputTokens: 350
         }
       };
 
@@ -69,21 +79,23 @@ CRITICAL RULES:
         "X-goog-api-key": this.apiKey
       };
 
-      // Try streaming endpoint first
+      // Try streaming endpoint with ultra-fast flash-lite
       let url = `https://generativelanguage.googleapis.com/v1beta/models/${this.modelName}:streamGenerateContent?alt=sse`;
       let response = await fetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal
       });
 
-      // If model not found or error, fallback to gemini-1.5-flash
+      // Fallback if needed
       if (!response.ok) {
         url = `https://generativelanguage.googleapis.com/v1beta/models/${this.fallbackModel}:streamGenerateContent?alt=sse`;
         response = await fetch(url, {
           method: "POST",
           headers,
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal
         });
       }
 
@@ -93,7 +105,8 @@ CRITICAL RULES:
         const directRes = await fetch(directUrl, {
           method: "POST",
           headers,
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal
         });
 
         if (directRes.ok) {
@@ -110,6 +123,10 @@ CRITICAL RULES:
 
       await this._processSSEResponse(response, onToken, onComplete);
     } catch (err) {
+      if (err.name === 'AbortError') {
+        // Ignored: superseded by a newer question
+        return;
+      }
       if (onError) onError(err);
     }
   }
