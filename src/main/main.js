@@ -26,6 +26,29 @@ let currentActiveMode = 'code';
 const userDataPath = app.getPath('userData');
 const profileFilePath = path.join(userDataPath, 'profile.json');
 const defaultProfilePath = path.join(__dirname, '../config/profile.json');
+const configFilePath = path.join(userDataPath, 'config.json');
+
+function loadConfig() {
+  try {
+    if (fs.existsSync(configFilePath)) {
+      return JSON.parse(fs.readFileSync(configFilePath, 'utf-8'));
+    }
+  } catch (e) {
+    console.error("Error loading config:", e);
+  }
+  return {};
+}
+
+function saveConfig(data) {
+  try {
+    const current = loadConfig();
+    fs.writeFileSync(configFilePath, JSON.stringify({ ...current, ...data }, null, 2), 'utf-8');
+    return true;
+  } catch (e) {
+    console.error("Error saving config:", e);
+    return false;
+  }
+}
 
 function loadProfile() {
   try {
@@ -148,7 +171,10 @@ app.whenReady().then(() => {
 
   // Initialize AI Service
   const initialProfile = loadProfile();
-  const apiKey = process.env.GEMINI_API_KEY || "";
+  const savedConfig = loadConfig();
+  const apiKey = process.env.GEMINI_API_KEY || savedConfig.geminiApiKey || "";
+  const deepgramKey = process.env.DEEPGRAM_API_KEY || savedConfig.deepgramApiKey || "";
+
   geminiService = new GeminiService(apiKey);
   conversationAnalyzer = new InterviewConversationAnalyzer(apiKey);
 
@@ -163,7 +189,7 @@ app.whenReady().then(() => {
 
   // Initialize Native Linux Audio Loopback (records Google Meet directly)
   nativeAudio = new NativeAudioService();
-  deepgramService = new DeepgramLiveService(process.env.DEEPGRAM_API_KEY || "");
+  deepgramService = new DeepgramLiveService(deepgramKey);
   screenCaptureService = new ScreenCaptureService();
   let currentActiveMode = 'points';
 
@@ -316,12 +342,32 @@ ipcMain.on('stop-native-audio', () => {
 ipcMain.on('set-native-audio-source', (event, source) => {
   if (nativeAudio) nativeAudio.setSource(source);
 });
+ipcMain.on('incoming-browser-audio-chunk', (event, { chunk, source }) => {
+  if (deepgramService && deepgramService.isConnected) {
+    try {
+      const buffer = Buffer.from(chunk);
+      deepgramService.sendAudioChunk(buffer, source || 'mic');
+    } catch (e) {
+      console.error('[BrowserAudioChunk Error]:', e.message);
+    }
+  }
+});
+
 ipcMain.handle('get-initial-data', () => {
+  const savedConfig = loadConfig();
+  const currentGeminiKey = (geminiService && geminiService.apiKey) || savedConfig.geminiApiKey || process.env.GEMINI_API_KEY || "";
+  const currentDeepgramKey = (deepgramService && deepgramService.apiKey) || savedConfig.deepgramApiKey || process.env.DEEPGRAM_API_KEY || "";
+
   return {
     profile: loadProfile(),
     lanIp: companionServer ? companionServer.getLanIp() : '127.0.0.1',
     port: companionServer ? companionServer.port : 3890,
-    hasApiKey: Boolean(geminiService && geminiService.apiKey)
+    hasApiKey: Boolean(currentGeminiKey),
+    hasDeepgramKey: Boolean(currentDeepgramKey),
+    geminiApiKey: currentGeminiKey,
+    deepgramApiKey: currentDeepgramKey,
+    platform: process.platform,
+    isLinux: process.platform === 'linux'
   };
 });
 
@@ -331,11 +377,16 @@ ipcMain.handle('save-profile', (event, profile) => {
 
 ipcMain.handle('update-api-key', (event, newKey) => {
   if (geminiService) geminiService.setApiKey(newKey);
+  if (conversationAnalyzer) conversationAnalyzer.setApiKey(newKey);
+  saveConfig({ geminiApiKey: newKey });
+  console.log('[Config] Gemini API key updated and saved permanently');
   return true;
 });
 
 ipcMain.handle('update-deepgram-key', (event, newKey) => {
   if (deepgramService) deepgramService.setApiKey(newKey);
+  saveConfig({ deepgramApiKey: newKey });
+  console.log('[Config] Deepgram API key updated and saved permanently');
   return true;
 });
 

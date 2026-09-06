@@ -74,6 +74,13 @@ async function init() {
     inputSkills.value = (profileData.primarySkills || []).join(', ');
     inputResume.value = profileData.resumeSummary || '';
     inputInstructions.value = profileData.customInstructions || '';
+    if (data.geminiApiKey) inputApiKey.value = data.geminiApiKey;
+    if (data.deepgramApiKey) inputDeepgramKey.value = data.deepgramApiKey;
+
+    if (!data.hasApiKey) {
+      settingsModal.style.display = 'flex';
+      setStatus('ready', '⚠️ Please enter Gemini API key in Settings');
+    }
 
     // IPC Listeners
     window.copilotAPI.onAiToken(({ chunk, fullText }) => {
@@ -217,8 +224,10 @@ function renderMarkdown(rawText) {
   answerDisplay.scrollTop = answerDisplay.scrollHeight;
 }
 
-// Audio Capture Engine (Dual-Stream PulseAudio)
+// Audio Capture Engine (Dual-Stream PulseAudio on Linux / WebAudio on Windows & macOS)
 let currentAudioSource = 'both'; // 'both' = Google Meet + Mic, 'monitor' = Meet only, 'mic' = Mic only
+let pcmContext = null;
+let pcmProcessor = null;
 
 async function startAudioCapture() {
   isListening = true;
@@ -231,9 +240,13 @@ async function startAudioCapture() {
   };
   setStatus('listening', statusLabels[currentAudioSource] || 'Listening...');
 
-  if (window.copilotAPI && window.copilotAPI.startNativeAudio) {
+  if (window.copilotAPI && window.copilotAPI.isLinux) {
     window.copilotAPI.startNativeAudio({ source: currentAudioSource, mode: currentMode });
   } else {
+    // Windows / macOS: Start Deepgram listener in main AND start browser audio streaming
+    if (window.copilotAPI && window.copilotAPI.startNativeAudio) {
+      window.copilotAPI.startNativeAudio({ source: currentAudioSource, mode: currentMode });
+    }
     startBrowserAudioCapture();
   }
 }
@@ -269,13 +282,48 @@ async function startBrowserAudioCapture() {
 
     setupAudioVisualizer(mediaStream);
     setupMediaRecorder(mediaStream);
+    setupPcmStreamer(mediaStream);
   } catch (err) {
     console.error("Browser audio capture error:", err);
     setStatus('error', 'Audio access error');
   }
 }
 
+function setupPcmStreamer(stream) {
+  try {
+    pcmContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    const pcmSource = pcmContext.createMediaStreamSource(stream);
+    pcmProcessor = pcmContext.createScriptProcessor(2048, 1, 1);
+
+    pcmProcessor.onaudioprocess = (e) => {
+      if (!isListening) return;
+      const inputData = e.inputBuffer.getChannelData(0);
+      const pcm16 = new Int16Array(inputData.length);
+      for (let i = 0; i < inputData.length; i++) {
+        const s = Math.max(-1, Math.min(1, inputData[i]));
+        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      if (window.copilotAPI && window.copilotAPI.sendAudioChunk) {
+        window.copilotAPI.sendAudioChunk(pcm16.buffer, currentAudioSource === 'monitor' ? 'monitor' : 'mic');
+      }
+    };
+
+    pcmSource.connect(pcmProcessor);
+    pcmProcessor.connect(pcmContext.destination);
+  } catch (e) {
+    console.warn("PCM streamer error:", e);
+  }
+}
+
 function stopBrowserAudioCapture() {
+  if (pcmProcessor) {
+    try { pcmProcessor.disconnect(); } catch (e) {}
+    pcmProcessor = null;
+  }
+  if (pcmContext && pcmContext.state !== 'closed') {
+    try { pcmContext.close(); } catch (e) {}
+    pcmContext = null;
+  }
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     try { mediaRecorder.stop(); } catch (e) {}
   }
@@ -286,6 +334,7 @@ function stopBrowserAudioCapture() {
   if (animFrameId) cancelAnimationFrame(animFrameId);
   if (audioContext && audioContext.state !== 'closed') {
     try { audioContext.close(); } catch (e) {}
+    audioContext = null;
   }
   statusPulse.style.transform = 'scale(1)';
   statusPulse.style.boxShadow = 'none';

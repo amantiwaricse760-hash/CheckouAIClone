@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('copilotAPI', {
   startNativeAudio: (data) => ipcRenderer.send('start-native-audio', data),
   stopNativeAudio: () => ipcRenderer.send('stop-native-audio'),
   setNativeAudioSource: (source) => ipcRenderer.send('set-native-audio-source', source),
+  sendAudioChunk: (chunk, source) => ipcRenderer.send('incoming-browser-audio-chunk', { chunk, source }),
+  isLinux: process.platform === 'linux',
+  platform: process.platform,
   
   // Screen Question Capture & Snip APIs
   captureScreen: () => ipcRenderer.send('capture-screen-solve'),
