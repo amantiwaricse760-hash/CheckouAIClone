@@ -29,6 +29,9 @@ class NativeAudioService extends EventEmitter {
   }
 
   detectDevices() {
+    if (process.platform !== 'linux') {
+      return { monitor: 'default.monitor', mic: 'default' };
+    }
     try {
       const info = execSync('pactl info', { encoding: 'utf-8' });
       const sinkMatch = info.match(/Default Sink:\s*(\S+)/);
@@ -69,6 +72,7 @@ class NativeAudioService extends EventEmitter {
   }
 
   ensureOptimalVolume() {
+    if (process.platform !== 'linux') return;
     try {
       if (this.devices.mic && this.devices.mic !== 'default') {
         execSync(`pactl set-source-volume ${this.devices.mic} 85%`, { stdio: 'ignore' });
@@ -85,6 +89,11 @@ class NativeAudioService extends EventEmitter {
     this.lockedSource = null;
     this.lockExpiry = 0;
     this.lastActiveSource = 'monitor';
+
+    if (process.platform !== 'linux') {
+      console.log(`[NativeAudio] Running on ${process.platform}. PulseAudio parec bypassed.`);
+      return;
+    }
 
     console.log(`[NativeAudio] Clean stream active: "${this.currentSource}" | Mic: ${this.devices.mic} | Meet: ${this.devices.monitor}`);
 
