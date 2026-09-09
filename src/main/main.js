@@ -25,6 +25,7 @@ let screenCaptureService = null;
 let conversationAnalyzer = null;
 let lastFullScreenshot = null;
 let currentActiveMode = 'code';
+let isUserDirectSpeaking = false;
 
 // Paths for profile & config
 const userDataPath = app.getPath('userData');
@@ -217,6 +218,18 @@ function createWindow() {
     openSnipWindow();
   });
 
+  // Alt + Q: Instant Speak Question Toggle
+  try {
+    globalShortcut.register('Alt+Q', () => {
+      console.log('[Shortcut] Alt+Q pressed: Toggling Speak Question mode...');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('toggle-speak-question');
+      }
+    });
+  } catch (e) {
+    console.error('Failed to register Alt+Q shortcut:', e);
+  }
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -345,6 +358,20 @@ ipcMain.on('start-native-audio', (event, { source, mode, sampleRate }) => {
         onSentenceComplete: async (rawText, speaker) => {
           console.log(`[Auto-Trigger]: Raw transcript captured: "${rawText}" (Speaker: ${speaker})`);
 
+          // If Candidate Direct Speech Mode is active ("Speak Question" button):
+          // Listen carefully to what the user said and answer directly without filtering out!
+          if (isUserDirectSpeaking) {
+            const userQ = (rawText || '').trim();
+            if (userQ.length >= 3) {
+              console.log(`[Direct-Speak Candidate Question Captured]: "${userQ}". Auto-answering immediately...`);
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('ai-transcribed', { question: userQ, isCleanQuestion: true });
+                mainWindow.webContents.send('direct-speak-auto-answer', { question: userQ });
+              }
+            }
+            return;
+          }
+
           if (!conversationAnalyzer) {
             conversationAnalyzer = new InterviewConversationAnalyzer(geminiService?.apiKey || DEFAULT_GEMINI_KEY);
           }
@@ -406,6 +433,11 @@ ipcMain.on('stop-native-audio', () => {
 
 ipcMain.on('set-native-audio-source', (event, source) => {
   if (nativeAudio) nativeAudio.setSource(source);
+});
+
+ipcMain.on('set-direct-speak-mode', (event, active) => {
+  isUserDirectSpeaking = !!active;
+  console.log(`[Direct-Speak Mode] set to: ${isUserDirectSpeaking}`);
 });
 
 ipcMain.on('incoming-browser-audio-chunk', (event, { chunk, source }) => {

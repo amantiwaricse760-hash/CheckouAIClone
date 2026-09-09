@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld('copilotAPI', {
   hideApp: () => ipcRenderer.send('hide-app'),
   closeApp: () => ipcRenderer.send('close-app'),
 
+  // Direct Speak APIs
+  setDirectSpeakMode: (active) => ipcRenderer.send('set-direct-speak-mode', active),
+
   // Listeners
   onAiToken: (callback) => ipcRenderer.on('ai-token', (event, data) => callback(data)),
   onAiComplete: (callback) => ipcRenderer.on('ai-complete', (event, data) => callback(data)),
@@ -38,5 +41,7 @@ contextBridge.exposeInMainWorld('copilotAPI', {
   onAiError: (callback) => ipcRenderer.on('ai-error', (event, data) => callback(data)),
   onGhostModeChanged: (callback) => ipcRenderer.on('ghost-mode-changed', (event, isGhost) => callback(isGhost)),
   onClearRequest: (callback) => ipcRenderer.on('clear-request', () => callback()),
-  onCompanionAction: (callback) => ipcRenderer.on('companion-action', (event, action) => callback(action))
+  onCompanionAction: (callback) => ipcRenderer.on('companion-action', (event, action) => callback(action)),
+  onToggleSpeakQuestion: (callback) => ipcRenderer.on('toggle-speak-question', () => callback()),
+  onDirectSpeakAutoAnswer: (callback) => ipcRenderer.on('direct-speak-auto-answer', (event, data) => callback(data))
 });

@@ -383,6 +383,35 @@ body {
   border-color: #ef4444;
 }
 
+.action-chip.speak-btn {
+  background: rgba(168, 85, 247, 0.15);
+  border-color: rgba(168, 85, 247, 0.45);
+  color: #c084fc;
+}
+
+.action-chip.speak-btn:hover {
+  background: rgba(168, 85, 247, 0.28);
+  color: #f3e8ff;
+  border-color: #d8b4fe;
+}
+
+.action-chip.speak-btn.active {
+  background: #a855f7;
+  color: #ffffff;
+  border-color: #c084fc;
+  font-weight: 700;
+  animation: speakGlow 1.2s infinite alternate;
+}
+
+@keyframes speakGlow {
+  0% {
+    box-shadow: 0 0 6px rgba(168, 85, 247, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 16px rgba(168, 85, 247, 0.95);
+  }
+}
+
 .question-card {
   flex-shrink: 0;
 }

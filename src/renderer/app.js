@@ -8,6 +8,8 @@ let recognition = null;
 let profileData = {};
 let lanUrl = '';
 let currentQuestion = '';
+let isUserDirectSpeaking = false;
+let directSpeakSilenceTimer = null;
 
 // DOM Elements
 const hudContainer = document.getElementById('hudContainer');
@@ -25,6 +27,7 @@ const modePills = document.querySelectorAll('.mode-pill');
 const questionInput = document.getElementById('questionInput');
 const answerDisplay = document.getElementById('answerDisplay');
 
+const btnSpeakAsk = document.getElementById('btnSpeakAsk');
 const btnAskNow = document.getElementById('btnAskNow');
 const btnScreenSolve = document.getElementById('btnScreenSolve');
 const btnSnipArea = document.getElementById('btnSnipArea');
@@ -94,6 +97,33 @@ async function init() {
     window.copilotAPI.onAiTranscribed(({ question }) => {
       questionInput.value = question;
       currentQuestion = question;
+
+      // When user is speaking directly to copilot, debounce auto-submit on pause
+      if (isUserDirectSpeaking) {
+        if (directSpeakSilenceTimer) clearTimeout(directSpeakSilenceTimer);
+        if (question && question.trim().length >= 5) {
+          directSpeakSilenceTimer = setTimeout(() => {
+            if (isUserDirectSpeaking) {
+              console.log('[Direct Speak] Pause detected after speech. Auto-answering...');
+              stopDirectSpeak(true);
+            }
+          }, 1800);
+        }
+      }
+    });
+
+    window.copilotAPI.onToggleSpeakQuestion(() => {
+      toggleDirectSpeak();
+    });
+
+    window.copilotAPI.onDirectSpeakAutoAnswer(({ question }) => {
+      if (isUserDirectSpeaking) {
+        if (question) {
+          questionInput.value = question;
+          currentQuestion = question;
+        }
+        stopDirectSpeak(true);
+      }
     });
 
     window.copilotAPI.onAudioLevel((level) => {
@@ -249,6 +279,9 @@ async function startAudioCapture() {
 }
 
 function stopAudioCapture() {
+  if (isUserDirectSpeaking) {
+    stopDirectSpeak(false);
+  }
   isListening = false;
   btnListen.classList.remove('active');
   listenText.innerText = 'Start Listening';
@@ -418,12 +451,81 @@ function setMode(mode) {
 }
 
 function clearUI() {
+  if (isUserDirectSpeaking) {
+    stopDirectSpeak(false);
+  }
   questionInput.value = '';
   currentQuestion = '';
   answerDisplay.innerHTML = '<div class="placeholder-text">When your interviewer speaks, bullet-point answers and code snippets will stream here instantly.</div>';
   setStatus('ready', 'Ready');
   if (browserSocket && browserSocket.readyState === WebSocket.OPEN) {
     browserSocket.send(JSON.stringify({ action: 'clear' }));
+  }
+}
+
+function toggleDirectSpeak() {
+  if (isUserDirectSpeaking) {
+    stopDirectSpeak(true);
+  } else {
+    startDirectSpeak();
+  }
+}
+
+function startDirectSpeak() {
+  isUserDirectSpeaking = true;
+  if (directSpeakSilenceTimer) {
+    clearTimeout(directSpeakSilenceTimer);
+    directSpeakSilenceTimer = null;
+  }
+
+  if (btnSpeakAsk) {
+    btnSpeakAsk.classList.add('active');
+    btnSpeakAsk.innerHTML = '🔴 Listening... (Click to Answer)';
+  }
+
+  questionInput.value = '';
+  currentQuestion = '';
+  questionInput.placeholder = 'Listening carefully to your voice... Speak your question clearly now...';
+  questionInput.focus();
+  setStatus('listening', 'Listening to you...');
+
+  // Notify backend to prioritize candidate question and bypass monologue filtering
+  if (window.copilotAPI && window.copilotAPI.setDirectSpeakMode) {
+    window.copilotAPI.setDirectSpeakMode(true);
+  }
+
+  // Ensure audio capture is running
+  if (!isListening) {
+    startAudioCapture();
+  }
+}
+
+function stopDirectSpeak(shouldAnswer = true) {
+  if (!isUserDirectSpeaking) return;
+  isUserDirectSpeaking = false;
+
+  if (directSpeakSilenceTimer) {
+    clearTimeout(directSpeakSilenceTimer);
+    directSpeakSilenceTimer = null;
+  }
+
+  if (btnSpeakAsk) {
+    btnSpeakAsk.classList.remove('active');
+    btnSpeakAsk.innerHTML = '🎙️ Speak Question';
+  }
+
+  questionInput.placeholder = "Listening to Google Meet live... or click '🎙️ Speak Question' (Alt+Q) / Screen (Ctrl+S)";
+  setStatus('ready', 'Ready');
+
+  if (window.copilotAPI && window.copilotAPI.setDirectSpeakMode) {
+    window.copilotAPI.setDirectSpeakMode(false);
+  }
+
+  if (shouldAnswer) {
+    const q = questionInput.value.trim();
+    if (q) {
+      triggerAsk(q);
+    }
   }
 }
 
@@ -500,9 +602,20 @@ function setupEventListeners() {
   // Mini Dock Button
   btnMiniDock.addEventListener('click', () => toggleMiniDock());
 
+  // Speak Question Button
+  if (btnSpeakAsk) {
+    btnSpeakAsk.addEventListener('click', () => {
+      toggleDirectSpeak();
+    });
+  }
+
   // Ask Now Button
   btnAskNow.addEventListener('click', () => {
-    triggerAsk(questionInput.value);
+    if (isUserDirectSpeaking) {
+      stopDirectSpeak(true);
+    } else {
+      triggerAsk(questionInput.value);
+    }
   });
 
   // Screen Solve Button (Ctrl+S)
@@ -547,7 +660,11 @@ function setupEventListeners() {
   questionInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      triggerAsk(questionInput.value);
+      if (isUserDirectSpeaking) {
+        stopDirectSpeak(true);
+      } else {
+        triggerAsk(questionInput.value);
+      }
     }
   });
 
