@@ -30,6 +30,7 @@ class DeepgramLiveService {
   }
 
   startStreaming(config = {}) {
+    const prevRate = this.streamConfig?.sampleRate;
     this.streamConfig = config;
     this.isStreaming = true;
 
@@ -40,7 +41,9 @@ class DeepgramLiveService {
       return;
     }
 
-    this._connect();
+    if (!this.ws || !this.isConnected || (config.sampleRate && config.sampleRate !== prevRate)) {
+      this._connect();
+    }
   }
 
   _connect() {

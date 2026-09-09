@@ -224,8 +224,11 @@ function renderMarkdown(rawText) {
 
 // Audio Capture Engine (Dual-Stream PulseAudio on Linux / WebAudio on Windows & macOS)
 let currentAudioSource = 'both'; // 'both' = Google Meet + Mic, 'monitor' = Meet only, 'mic' = Mic only
-let pcmContext = null;
+let audioCtx = null;
 let pcmProcessor = null;
+let analyser = null;
+let mediaStream = null;
+let animFrameId = null;
 
 async function startAudioCapture() {
   isListening = true;
@@ -241,10 +244,6 @@ async function startAudioCapture() {
   if (window.copilotAPI && window.copilotAPI.isLinux) {
     window.copilotAPI.startNativeAudio({ source: currentAudioSource, mode: currentMode });
   } else {
-    // Windows / macOS: Start Deepgram listener in main AND start browser audio streaming
-    if (window.copilotAPI && window.copilotAPI.startNativeAudio) {
-      window.copilotAPI.startNativeAudio({ source: currentAudioSource, mode: currentMode });
-    }
     startBrowserAudioCapture();
   }
 }
@@ -263,6 +262,11 @@ function stopAudioCapture() {
 
 async function startBrowserAudioCapture() {
   try {
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+    }
+
     if (currentAudioSource === 'monitor') {
       mediaStream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
@@ -278,24 +282,63 @@ async function startBrowserAudioCapture() {
       });
     }
 
-    setupAudioVisualizer(mediaStream);
-    setupMediaRecorder(mediaStream);
-    setupPcmStreamer(mediaStream);
+    setupUnifiedAudioPipeline(mediaStream);
   } catch (err) {
     console.error("Browser audio capture error:", err);
-    setStatus('error', 'Audio access error');
+    setStatus('error', 'Microphone access error');
   }
 }
 
-function setupPcmStreamer(stream) {
+function setupUnifiedAudioPipeline(stream) {
   try {
-    pcmContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-    if (pcmContext.state === 'suspended') {
-      pcmContext.resume().catch(() => {});
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AudioContextClass();
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
     }
-    const pcmSource = pcmContext.createMediaStreamSource(stream);
-    pcmProcessor = pcmContext.createScriptProcessor(2048, 1, 1);
 
+    const nativeSampleRate = audioCtx.sampleRate || 16000;
+    console.log(`[AudioPipeline] Microphone native sample rate: ${nativeSampleRate}Hz`);
+
+    // 1. Notify main process to start Deepgram with the actual hardware sample rate
+    if (window.copilotAPI && window.copilotAPI.startNativeAudio) {
+      window.copilotAPI.startNativeAudio({
+        source: currentAudioSource,
+        mode: currentMode,
+        sampleRate: nativeSampleRate
+      });
+    }
+
+    const source = audioCtx.createMediaStreamSource(stream);
+
+    // 2. Audio Visualizer (VU meter pulse)
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 64;
+    source.connect(analyser);
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    function checkVolume() {
+      if (!isListening) return;
+      analyser.getByteFrequencyData(dataArray);
+      let sum = 0;
+      for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
+      let avg = sum / bufferLength;
+
+      if (avg > 15) {
+        statusPulse.style.transform = `scale(${1 + Math.min(avg / 28, 0.85)})`;
+        statusPulse.style.boxShadow = `0 0 12px #22c55e`;
+      } else {
+        statusPulse.style.transform = 'scale(1)';
+        statusPulse.style.boxShadow = 'none';
+      }
+      animFrameId = requestAnimationFrame(checkVolume);
+    }
+    checkVolume();
+
+    // 3. Ultra-Low Latency PCM Streamer to Deepgram
+    pcmProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
     pcmProcessor.onaudioprocess = (e) => {
       if (!isListening) return;
       const inputData = e.inputBuffer.getChannelData(0);
@@ -310,10 +353,10 @@ function setupPcmStreamer(stream) {
       }
     };
 
-    pcmSource.connect(pcmProcessor);
-    pcmProcessor.connect(pcmContext.destination);
-  } catch (e) {
-    console.warn("PCM streamer error:", e);
+    source.connect(pcmProcessor);
+    pcmProcessor.connect(audioCtx.destination);
+  } catch (err) {
+    console.error("Audio pipeline initialization error:", err);
   }
 }
 
@@ -322,114 +365,17 @@ function stopBrowserAudioCapture() {
     try { pcmProcessor.disconnect(); } catch (e) {}
     pcmProcessor = null;
   }
-  if (pcmContext && pcmContext.state !== 'closed') {
-    try { pcmContext.close(); } catch (e) {}
-    pcmContext = null;
-  }
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    try { mediaRecorder.stop(); } catch (e) {}
+  if (audioCtx && audioCtx.state !== 'closed') {
+    try { audioCtx.close(); } catch (e) {}
+    audioCtx = null;
   }
   if (mediaStream) {
     mediaStream.getTracks().forEach(t => t.stop());
     mediaStream = null;
   }
   if (animFrameId) cancelAnimationFrame(animFrameId);
-  if (audioContext && audioContext.state !== 'closed') {
-    try { audioContext.close(); } catch (e) {}
-    audioContext = null;
-  }
   statusPulse.style.transform = 'scale(1)';
   statusPulse.style.boxShadow = 'none';
-}
-
-function setupAudioVisualizer(stream) {
-  try {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioContext.state === 'suspended') {
-      audioContext.resume().catch(() => {});
-    }
-    const source = audioContext.createMediaStreamSource(stream);
-    analyser = audioContext.createAnalyser();
-    analyser.fftSize = 64;
-    source.connect(analyser);
-
-    const bufferLength = analyser.frequencyBinCount;
-    dataArray = new Uint8Array(bufferLength);
-
-    function checkVolume() {
-      if (!isListening) return;
-      analyser.getByteFrequencyData(dataArray);
-      let sum = 0;
-      for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-      let avg = sum / bufferLength;
-
-      if (avg > 18) {
-        statusPulse.style.transform = `scale(${1 + Math.min(avg / 30, 0.8)})`;
-        statusPulse.style.boxShadow = `0 0 10px #22c55e`;
-        lastSoundTime = Date.now();
-        isSpeaking = true;
-      } else {
-        statusPulse.style.transform = 'scale(1)';
-        statusPulse.style.boxShadow = 'none';
-
-        if (isSpeaking && (Date.now() - lastSoundTime > 1800)) {
-          isSpeaking = false;
-          if (mediaRecorder && mediaRecorder.state === 'recording') {
-            mediaRecorder.stop();
-          }
-        }
-      }
-      animFrameId = requestAnimationFrame(checkVolume);
-    }
-    checkVolume();
-  } catch (e) {
-    console.error("Visualizer error:", e);
-  }
-}
-
-function setupMediaRecorder(stream) {
-  let mimeType = 'audio/webm;codecs=opus';
-  if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'audio/webm';
-
-  recordedChunks = [];
-  mediaRecorder = new MediaRecorder(stream, { mimeType });
-
-  mediaRecorder.ondataavailable = (event) => {
-    if (event.data.size > 0) recordedChunks.push(event.data);
-  };
-
-  mediaRecorder.onstop = async () => {
-    if (recordedChunks.length > 0) {
-      const blob = new Blob(recordedChunks, { type: mimeType });
-      recordedChunks = [];
-      if (blob.size > 8000) {
-        await sendAudioToGemini(blob, mimeType);
-      }
-    }
-    if (isListening && mediaStream && mediaStream.active) {
-      try { mediaRecorder.start(); } catch (e) {}
-    }
-  };
-
-  mediaRecorder.start();
-}
-
-async function sendAudioToGemini(blob, mimeType) {
-  setStatus('generating', 'Transcribing...');
-  answerDisplay.innerHTML = '<div class="placeholder-text">Analyzing interviewer audio & writing answer...</div>';
-
-  const reader = new FileReader();
-  reader.onloadend = () => {
-    const base64Data = reader.result.split(',')[1];
-    if (window.copilotAPI) {
-      window.copilotAPI.askAudioCopilot({
-        audioBase64: base64Data,
-        mimeType: mimeType,
-        mode: currentMode
-      });
-    }
-  };
-  reader.readAsDataURL(blob);
 }
 
 function triggerAsk(question, extraInstruction = '') {
@@ -695,10 +641,9 @@ function setupEventListeners() {
     settingsModal.style.display = 'none';
   });
 
-  // Ensure AudioContexts resume on any user gesture
+  // Ensure AudioContext resumes on any user gesture
   document.addEventListener('pointerdown', () => {
-    if (pcmContext && pcmContext.state === 'suspended') pcmContext.resume().catch(() => {});
-    if (audioContext && audioContext.state === 'suspended') audioContext.resume().catch(() => {});
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   }, { passive: true });
 }
 

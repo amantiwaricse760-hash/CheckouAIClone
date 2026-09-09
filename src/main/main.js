@@ -15,7 +15,6 @@ const DEFAULT_GEMINI_KEY = Buffer.from('QVEuQWI4Uk42S3VvLVNWa1dEMkJTeHdFejJnT3da
 const DEFAULT_DEEPGRAM_KEY = Buffer.from('Yzk0ZGFjZDc2MWJjZWI1MDNlMDkyN2EzNzU4ODVlODhmZmE2MGJiNg==', 'base64').toString('utf-8');
 
 let mainWindow = null;
-let hiddenOwnerWindow = null;
 let snipWindow = null;
 let isGhostMode = false;
 let geminiService = null;
@@ -87,18 +86,8 @@ function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
 
-  // Stealth Win32 technique: create invisible owner window to guarantee taskbar exclusion on Windows
-  if (process.platform === 'win32' && (!hiddenOwnerWindow || hiddenOwnerWindow.isDestroyed())) {
-    hiddenOwnerWindow = new BrowserWindow({
-      show: false,
-      width: 0,
-      height: 0,
-      skipTaskbar: true
-    });
-  }
-
   mainWindow = new BrowserWindow({
-    ...(hiddenOwnerWindow ? { parent: hiddenOwnerWindow } : {}),
+    show: false, // CRITICAL: Start hidden so Windows OS never creates a taskbar button on launch
     width: 480,
     height: 640,
     x: width - 500, // Top right corner
@@ -107,7 +96,6 @@ function createWindow() {
     transparent: true,
     alwaysOnTop: true,
     skipTaskbar: true, // NEVER show icon in Windows taskbar
-    type: 'toolbar', // Win32 Tool Window: excluded from Alt+Tab and browser window pickers
     title: '', // Disguised empty title
     resizable: true,
     hasShadow: false,
@@ -119,14 +107,9 @@ function createWindow() {
     }
   });
 
-  try {
-    mainWindow.setSkipTaskbar(true);
-  } catch (e) {}
-
-  // CRITICAL STEALTH FEATURE: Clean Screen Share Invisibility
-  // Note: Electron's built-in setContentProtection(true) forces Windows to draw a SOLID BLACK BOX (WDA_MONITOR = 1).
-  // To eliminate the black box on Google Meet / Zoom screen share, we use WDA_EXCLUDEFROMCAPTURE (0x11 = 17) on Win10/11,
-  // which captures whatever is behind the window with ZERO black box.
+  // CRITICAL STEALTH FEATURE: Clean Screen Share Invisibility & Complete Taskbar Removal
+  // 1. WDA_EXCLUDEFROMCAPTURE (17) -> Eliminates black box on Google Meet / Zoom screen share
+  // 2. Win32 WS_EX_TOOLWINDOW (0x80) & strip WS_EX_APPWINDOW (0x40000) -> 100% hidden on Windows taskbar
   const applyStealthProtection = () => {
     try {
       mainWindow.setSkipTaskbar(true);
@@ -134,25 +117,65 @@ function createWindow() {
         const handle = mainWindow.getNativeWindowHandle();
         const hwnd = handle.length >= 8 ? handle.readBigInt64LE().toString() : handle.readInt32LE().toString();
         const { spawn } = require('child_process');
+        const psScript = `
+          $sig = @'
+            using System;
+            using System.Runtime.InteropServices;
+            public class WinStealth {
+              [DllImport("user32.dll", EntryPoint="GetWindowLongPtr")]
+              private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+              [DllImport("user32.dll", EntryPoint="GetWindowLong")]
+              private static extern IntPtr GetWindowLong32(IntPtr hWnd, int nIndex);
+              public static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex) {
+                return IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : GetWindowLong32(hWnd, nIndex);
+              }
+              [DllImport("user32.dll", EntryPoint="SetWindowLongPtr")]
+              private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+              [DllImport("user32.dll", EntryPoint="SetWindowLong")]
+              private static extern IntPtr SetWindowLong32(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+              public static IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong) {
+                return IntPtr.Size == 8 ? SetWindowLongPtr64(hWnd, nIndex, dwNewLong) : SetWindowLong32(hWnd, nIndex, dwNewLong);
+              }
+              [DllImport("user32.dll")]
+              public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+              [DllImport("user32.dll")]
+              public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
+            }
+'@;
+          Add-Type -TypeDefinition $sig -Name WinStealth -Namespace Win32Helper -IgnoreWarnings;
+          $h = [IntPtr]${hwnd};
+          [Win32Helper.WinStealth]::SetWindowDisplayAffinity($h, 17);
+          $cur = [Win32Helper.WinStealth]::GetWindowLongPtr($h, -20).ToInt64();
+          $newStyle = ($cur -band -bnot 0x00040000) -bor 0x00000080;
+          [Win32Helper.WinStealth]::SetWindowLongPtr($h, -20, [IntPtr]$newStyle);
+          [Win32Helper.WinStealth]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, 0, 0, 0x0037);
+        `;
         const ps = spawn('powershell.exe', [
           '-NoProfile',
           '-NonInteractive',
           '-WindowStyle',
           'Hidden',
           '-Command',
-          `$sig='[DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr h, uint a);'; Add-Type -MemberDefinition $sig -Name W32 -Namespace Win; [Win.W32]::SetWindowDisplayAffinity([IntPtr]${hwnd}, 17);`
+          psScript
         ], { windowsHide: true, stdio: 'ignore' });
         ps.unref();
       }
-      console.log("[Stealth] Clean screen share affinity & taskbar exclusion applied (zero black box)");
+      console.log("[Stealth] Taskbar exclusion & clean screen share affinity applied");
     } catch (e) {
       console.warn("[Stealth] Error applying window affinity:", e);
     }
   };
 
-  applyStealthProtection();
-  mainWindow.once('ready-to-show', applyStealthProtection);
-  mainWindow.on('show', applyStealthProtection);
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.setSkipTaskbar(true);
+    applyStealthProtection();
+    mainWindow.showInactive();
+  });
+
+  mainWindow.on('show', () => {
+    mainWindow.setSkipTaskbar(true);
+    applyStealthProtection();
+  });
 
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
@@ -196,10 +219,6 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
-    if (hiddenOwnerWindow && !hiddenOwnerWindow.isDestroyed()) {
-      hiddenOwnerWindow.close();
-      hiddenOwnerWindow = null;
-    }
   });
 }
 
@@ -212,8 +231,13 @@ app.whenReady().then(() => {
   // Initialize AI Service
   const initialProfile = loadProfile();
   const savedConfig = loadConfig();
-  const apiKey = process.env.GEMINI_API_KEY || savedConfig.geminiApiKey || DEFAULT_GEMINI_KEY;
-  const deepgramKey = process.env.DEEPGRAM_API_KEY || savedConfig.deepgramApiKey || DEFAULT_DEEPGRAM_KEY;
+  const apiKey = (savedConfig.geminiApiKey && savedConfig.geminiApiKey.trim()) || process.env.GEMINI_API_KEY || DEFAULT_GEMINI_KEY;
+  const deepgramKey = (savedConfig.deepgramApiKey && savedConfig.deepgramApiKey.trim()) || process.env.DEEPGRAM_API_KEY || DEFAULT_DEEPGRAM_KEY;
+
+  // Persist default keys so the local config always has valid tokens
+  if (!savedConfig.geminiApiKey || !savedConfig.deepgramApiKey) {
+    saveConfig({ geminiApiKey: apiKey, deepgramApiKey: deepgramKey });
+  }
 
   geminiService = new GeminiService(apiKey);
   conversationAnalyzer = new InterviewConversationAnalyzer(apiKey);
@@ -305,13 +329,14 @@ app.on('will-quit', () => {
 });
 
 // IPC Handlers
-ipcMain.on('start-native-audio', (event, { source, mode }) => {
+ipcMain.on('start-native-audio', (event, { source, mode, sampleRate }) => {
   if (nativeAudio) {
     currentActiveMode = mode || 'points';
     nativeAudio.setSource(source || 'both');
 
     if (deepgramService && deepgramService.apiKey) {
       deepgramService.startStreaming({
+        sampleRate: sampleRate || 16000,
         onTranscript: (text, isFinal, speaker) => {
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('ai-transcribed', { question: text, isFinal, speaker });
@@ -396,15 +421,15 @@ ipcMain.on('incoming-browser-audio-chunk', (event, { chunk, source }) => {
 
 ipcMain.handle('get-initial-data', () => {
   const savedConfig = loadConfig();
-  const currentGeminiKey = (geminiService && geminiService.apiKey) || savedConfig.geminiApiKey || process.env.GEMINI_API_KEY || DEFAULT_GEMINI_KEY;
-  const currentDeepgramKey = (deepgramService && deepgramService.apiKey) || savedConfig.deepgramApiKey || process.env.DEEPGRAM_API_KEY || DEFAULT_DEEPGRAM_KEY;
+  const currentGeminiKey = (savedConfig.geminiApiKey && savedConfig.geminiApiKey.trim()) || (geminiService && geminiService.apiKey) || process.env.GEMINI_API_KEY || DEFAULT_GEMINI_KEY;
+  const currentDeepgramKey = (savedConfig.deepgramApiKey && savedConfig.deepgramApiKey.trim()) || (deepgramService && deepgramService.apiKey) || process.env.DEEPGRAM_API_KEY || DEFAULT_DEEPGRAM_KEY;
 
   return {
     profile: loadProfile(),
     lanIp: companionServer ? companionServer.getLanIp() : '127.0.0.1',
     port: companionServer ? companionServer.port : 3890,
-    hasApiKey: Boolean(currentGeminiKey),
-    hasDeepgramKey: Boolean(currentDeepgramKey),
+    hasApiKey: true,
+    hasDeepgramKey: true,
     geminiApiKey: currentGeminiKey,
     deepgramApiKey: currentDeepgramKey,
     platform: process.platform,
